@@ -18,6 +18,9 @@ class AsyncESIManager:
         self.market = self._MarketESI(self._session)
         self.universe = self._UniverseESI(self._session)
 
+    async def close_session(self):
+        await self._session.close()
+
     class _MarketESI:
         def __init__(self, session: aiohttp.ClientSession):
             self._session = session

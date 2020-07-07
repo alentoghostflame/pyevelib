@@ -1,6 +1,6 @@
 import logging
 import aiohttp
-from typing import Union, Optional, Set
+from typing import Union
 
 
 class ESIManager:

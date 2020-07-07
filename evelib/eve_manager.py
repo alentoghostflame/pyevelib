@@ -17,7 +17,7 @@ class EVEManager:
         self._cache_location: str = cache_location
         self.universe: UniverseManager = UniverseManager(self._logger, sde_path, cache_location)
         self.types: TypeManager = TypeManager(self._logger, sde_path, cache_location)
-        from evelib.esi.async_esi_manager import AsyncESIManager
+        from evelib.esi import AsyncESIManager
         if use_aiohttp:
             # from evelib.esi.async_esi_manager import AsyncESIManager
             self.esi: AsyncESIManager = AsyncESIManager(self._logger, session)

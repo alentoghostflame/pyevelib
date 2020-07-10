@@ -109,7 +109,8 @@ class UniverseManager:
                     region_id = self._lite_cache.get_id(file_path.split("/")[3])
                     location_data = SolarSystemData(path=f"{self._sde_path}/{file_path}",
                                                     name=self._lite_cache.get_name(location_id), region=region_id)
-                return location_data
+                self._ram_cache[location_id] = location_data
+                return self._ram_cache[location_id]
         else:
             return None
 

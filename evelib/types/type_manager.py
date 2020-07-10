@@ -1,3 +1,5 @@
+from evelib.types.categories import CategoryManager
+from evelib.types.groups import GroupManager
 from evelib.types.type_data import TypeCache, TypeData
 from pathlib import Path
 import logging
@@ -9,7 +11,6 @@ try:
 except ImportError:
     from yaml import SafeLoader, SafeDumper
     print("Import regular yaml")
-import os
 
 
 class TypeManager:
@@ -21,7 +22,12 @@ class TypeManager:
         self._cache = TypeCache(self._cache_location, "type_cache.yaml")
         self._ram_cache: Dict[int, TypeData] = dict()
 
+        self.categories = CategoryManager(logger, sde_path)
+        self.groups = GroupManager(logger, sde_path, self.categories)
+
     def load(self):
+        self.categories.load()
+        self.groups.load()
         self._logger.debug("Starting to load types...")
         if self._cache.load():
             self._logger.debug("Type cache loaded.")
@@ -43,14 +49,15 @@ class TypeManager:
         self._logger.info("Creating type cache from SDE, this may take some time...")
         type_file_location = f"{self._sde_path}/fsd/typeIDs.yaml"
         type_file = open(type_file_location, "r")
-        raw_data = yaml.safe_load(type_file)
+        raw_data = yaml.load(type_file, Loader=SafeLoader)
         type_file.close()
 
         for type_id in raw_data:
-            type_name = raw_data[type_id].get("name", {"en": "English name not found."}).get("en", "Name not found in SDE.")
-            # self.cache.ids[item_id] = {"name": raw_data[item_id]["name"]["en"]}
-            self._cache.ids[type_id] = {"name": type_name}
-            # self.cache.names[raw_data[item_id]["name"]["en"]] = item_id
+            type_name = raw_data[type_id].get("name", {"en": "English name not found."}).get("en",
+                                                                                             "Name not found in SDE.")
+            self._cache.ids[type_id] = {"name": type_name,
+                                        "group_id": raw_data[type_id]["groupID"],
+                                        "volume": raw_data[type_id].get("volume", -1)}
             self._cache.names[type_name] = type_id
         self._logger.info("Finished creating type cache, updates to the SDE may require deleting the cache once saved "
                           "to disk.")
@@ -65,7 +72,7 @@ class TypeManager:
             if type_id in self._ram_cache:
                 return self._ram_cache[type_id]
             else:
-                type_data = TypeData(type_id, state=self._cache.ids[type_id])
+                type_data = TypeData(type_id, state=self._cache.ids[type_id], group_manager=self.groups)
                 self._ram_cache[type_id] = type_data
                 return self._ram_cache[type_id]
         else:

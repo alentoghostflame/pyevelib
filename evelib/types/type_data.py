@@ -1,3 +1,4 @@
+from evelib.types.groups import GroupManager, GroupData
 from pathlib import Path
 from typing import Dict, Optional
 import yaml
@@ -8,22 +9,22 @@ except ImportError:
 
 
 class TypeData:
-    def __init__(self, type_id, state: dict = None):
+    def __init__(self, type_id, state: dict = None, group_manager: GroupManager = None):
         self.id = type_id
         self.name = "Default name."
+        self.group_id: int = 0
+        self.volume: float = 0
+        self.group: Optional[GroupData] = None
         if state:
-            self.from_dict(state)
+            self.from_dict(state, group_manager)
 
-    # def from_sde(self, state: dict):
-    #     state_id = state.get("id", 0)
-    #     if state_id:
-    #         self.id = state_id
-    #     self.name = state["name"]["en"]
-
-    def from_dict(self, state: dict):
+    def from_dict(self, state: dict, group_manager: GroupManager):
         if "id" in state:
             self.id = state["id"]
         self.name = state["name"]
+        self.group_id = state["group_id"]
+        self.volume = state["volume"]
+        self.group = group_manager.get(self.group_id)
 
 
 class TypeCache:

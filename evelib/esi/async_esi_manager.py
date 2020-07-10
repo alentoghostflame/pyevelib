@@ -1,6 +1,7 @@
+from typing import Union, Dict, List, Tuple
+from datetime import datetime
 import logging
 import aiohttp
-from typing import Union
 
 
 class ESIManager:
@@ -24,20 +25,34 @@ class AsyncESIManager:
     class _MarketESI:
         def __init__(self, session: aiohttp.ClientSession):
             self._session = session
+            self._order_cache: Dict[Tuple[int, int, str], List[dict]] = dict()
+            self._expirey_tracker: Dict[Tuple[int, int, str], datetime] = dict()
             self.BUY = "buy"
             self.SELL = "sell"
             self.ALL = "all"
 
         async def get_region_orders(self, region_id: Union[int, str], type_id: Union[int, str] = None,
-                                    order_type: str = None) -> dict:
-            base_url = "https://esi.evetech.net/latest/markets/{}/orders"
-            params = {}
-            if type_id:
-                params["type_id"] = type_id
-            if order_type:
-                params["order_type"] = order_type
-            response = await self._session.get(url=base_url.format(region_id), params=params)
-            return await response.json()
+                                    order_type: str = "all", cache: bool = True) -> List[dict]:
+            param_tuple = (region_id, int(type_id), order_type)
+            if param_tuple in self._expirey_tracker and self._expirey_tracker[param_tuple] > datetime.utcnow() and \
+                    param_tuple in self._order_cache:
+                return self._order_cache[param_tuple]
+            else:
+                base_url = "https://esi.evetech.net/latest/markets/{}/orders"
+                params = {}
+                if type_id:
+                    params["type_id"] = type_id
+                if order_type:
+                    params["order_type"] = order_type
+                response = await self._session.get(url=base_url.format(region_id), params=params)
+                response_json = await response.json()
+
+                if cache:
+                    expire_time = datetime.strptime(response.headers.getone("Expires"), "%a, %d %b %Y %H:%M:%S GMT")
+                    self._expirey_tracker[param_tuple] = expire_time
+                    self._order_cache[param_tuple] = response_json.copy()
+
+                return response_json
 
         async def get_structure_orders(self, structure_id: Union[int, str], token: str) -> dict:
             base_url = "https://esi.evetech.net/latest/markets/structures/{}/"

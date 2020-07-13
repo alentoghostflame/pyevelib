@@ -11,6 +11,13 @@ class ESIManager:
 
 class AsyncESIManager:
     def __init__(self, logger: logging.Logger, session: aiohttp.ClientSession = None):
+        """
+        Manages and handles requests to access the EVE Swagger Interface. Only does web calls, does not rely on the
+        Static Data Export.
+
+        :param logger: Logger object to log to.
+        :param session: ClientSession object to use. If none is provided, it will make one.
+        """
         self._logger = logger
         if session:
             self._session = session
@@ -20,10 +27,20 @@ class AsyncESIManager:
         self.universe = self._UniverseESI(self._session)
 
     async def close_session(self):
+        """
+        Used to close the ClientSession object. Useful when a ClientSession object isn't provided to the class.
+        :return:
+        """
         await self._session.close()
 
     class _MarketESI:
         def __init__(self, session: aiohttp.ClientSession):
+            """
+            Manages and handles requests to access the EVE Swagger Interface, specifically the market portion. Only does
+            web calls, does not rely on the Static Data Export.
+
+            :param session: ClientSession object to use.
+            """
             self._session = session
             self._order_cache: Dict[Tuple[int, int, str], List[dict]] = dict()
             self._expirey_tracker: Dict[Tuple[int, int, str], datetime] = dict()
@@ -33,6 +50,16 @@ class AsyncESIManager:
 
         async def get_region_orders(self, region_id: Union[int, str], type_id: Union[int, str] = None,
                                     order_type: str = "all", cache: bool = True) -> List[dict]:
+            """
+            Gets a list of orders from the given region, with the option to filter by item and order type.
+
+            :param region_id: Integer ID of the region to query.
+            :param type_id: Optional Integer or String of the item ID to get orders of.
+            :param order_type: Optional String of what order types to view. Accepts "all", "buy" or "sell".
+            :param cache: Boolean True to use utilize the RAM cache, False to force a call to the EVE Swagger Interface.
+
+            :return: A List of Dictionaries, as specified by the EVE Swagger Interface.
+            """
             param_tuple = (region_id, int(type_id), order_type)
             if cache and param_tuple in self._expirey_tracker and \
                     self._expirey_tracker[param_tuple] > datetime.utcnow() and param_tuple in self._order_cache:
@@ -55,15 +82,39 @@ class AsyncESIManager:
                 return response_json
 
         async def get_structure_orders(self, structure_id: Union[int, str], token: str) -> dict:
+            """
+            Gets market data from the given structure.
+
+            :param structure_id: Integer or String ID of the structure to get market data from.
+            :param token: String access token used for authentication. Requires
+            the esi-markets.structure_markets.v1 scope.
+
+            :return: A response, specified by the EVE Swagger Interface.
+            """
             base_url = "https://esi.evetech.net/latest/markets/structures/{}/"
             response = await self._session.get(url=base_url.format(structure_id), params={"token": token, })
             return await response.json()
 
     class _UniverseESI:
         def __init__(self, session: aiohttp.ClientSession):
+            """
+            Manages and handles requests to access the EVE Swagger Interface, specifically the universe portion. Only
+            does web calls, does not rely on the Static Data Export.
+
+            :param session: ClientSession object to use.
+            """
             self._session = session
 
         async def get_structure_info(self, structure_id: Union[int, str], token: str) -> dict:
+            """
+            Gets information about the given structure.
+
+            :param structure_id: Integer or String ID of the structure to get information of.
+            :param token: String access token used for authentication. Requires
+            the esi-universe.read_structures.v1 scope.
+
+            :return: A response, specified by the EVE Swagger Interface.
+            """
             base_url = "https://esi.evetech.net/latest/universe/structures/{}/"
             response = await self._session.get(url=base_url.format(structure_id), params={"token": token, })
             return await response.json()

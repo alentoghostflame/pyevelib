@@ -5,15 +5,22 @@ from typing import Union, Optional, Set
 import yaml
 try:
     from yaml import CSafeLoader as SafeLoader, CSafeDumper as SafeDumper
-    print("Managed to import C yaml!")
 except ImportError:
     from yaml import SafeLoader, SafeDumper
-    print("Import regular yaml")
 import os
 
 
 class UniverseManager:
     def __init__(self, logger: logging.Logger, sde_path: str, cache_location: str):
+        """
+        Manages and handles requests about the Universe of EVE, such as Solar Systems or Regions. Constellations are not
+        support at this time due to them not having real IDs and the low/non-existent usage of them in-game other than
+        in the map. Does not do any web calls, relies entirely on the Static Data Export.
+
+        :param logger: Logger object to log to.
+        :param sde_path: String path to the root folder of the EVE Static Data Export
+        :param cache_location: String path to the root folder to store cache files inside.
+        """
         self._logger = logger
         self._sde_path = sde_path
         self._universe_path = f"{self._sde_path}/fsd/universe"
@@ -23,6 +30,10 @@ class UniverseManager:
         self._ram_cache: dict = dict()
 
     def load(self):
+        """
+        Loads required files from disk. If the cache isn't on disk, populate it.
+        :return:
+        """
         self._logger.debug("Starting to load universe...")
         if self._lite_cache.load():
             self._logger.debug("Lite cache loaded.")
@@ -32,15 +43,23 @@ class UniverseManager:
         self._logger.debug("Universe loaded.")
 
     def save(self):
+        """
+        Saves required files to disk. If the cache wasn't loaded from disk, save it.
+        :return:
+        """
         self._logger.debug("Starting to save universe...")
         if not self._lite_cache.loaded:
             self._logger.debug("Lite cache wasn't loaded from disk, saving to disk...")
             if not self._lite_cache.save():
-                self._logger.warning("Lite cache was supposed to be saved, but is missing significant data, "
-                                     "what's going on?")
+                self._logger.warning("Lite cache was supposed to be saved, but is missing significant data, what's "
+                                     "going on?")
         self._logger.debug("Universe saved.")
 
     def _populate_lite_cache(self):
+        """
+        Populates the lite cache.
+        :return:
+        """
         self._logger.info("Creating lite location cache from SDE, this may take some time.")
         self._logger.debug("Associating location IDs to file paths...")
         self._populate_lite_cache_ids()
@@ -50,6 +69,13 @@ class UniverseManager:
                           "once saved to disk.")
 
     def _populate_lite_cache_ids(self):
+        """
+        Populates the ID portion of the lite cache. This function is responsible for linking the ID of a solar system or
+        region to the file location on disk. This will take some time due to PyYAML needing to interpret all the data
+        and it being single-threaded. Being able to import the CSafeLoader should speed this up. Almost certainly
+        possible to multi-thread this in the future.
+        :return:
+        """
         base_path = f"{self._sde_path}/fsd/universe"
         for space_category in get_folders_in_path(base_path):
             self._logger.debug(f"Reading space category {space_category}")
@@ -74,6 +100,12 @@ class UniverseManager:
                             f"/solarsystem.staticdata"
 
     def _populate_lite_cache_names(self):
+        """
+        Populates the names portion of the lite cache. This function is responsible for linking the in-game name of a
+        solar system or region to its ID. Due to the small size of sde/bsd/invUniqueNames.yaml, this should be
+        relatively fast.
+        :return:
+        """
         file = open(f"{self._sde_path}/bsd/invUniqueNames.yaml", "r")
         raw_data = yaml.load(file, Loader=SafeLoader)
         file.close()
@@ -83,12 +115,19 @@ class UniverseManager:
                 self._lite_cache.names[name_data["itemName"]] = name_data["itemID"]
 
     def get_any(self, location: Union[int, str]) -> Optional[Union[RegionData, SolarSystemData]]:
-        # self.logger.debug(f"GET ANY \"{location}\"")
+        """
+        A quick way to get location data. Caps and space insensitive. Recommended to use isinstance() to determine if
+        returned data is a RegionData or SolarSystemData object.
+
+        :param location: An Integer representing the ID of a solar system or region, or a String representing the name.
+
+        :return: A RegionData object if location corresponds to a region in EVE, SolarSystemData if it corresponds to a
+        solar system in EVE, None if it doesn't correspond to anything.
+        """
         if isinstance(location, int):
             location_id = location
         else:
             location_id = self._lite_cache.get_id(location)
-        # self.logger.debug(f"LOCATION ID {location_id}")
 
         if location_id:
             if location_id in self._ram_cache:
@@ -116,6 +155,13 @@ class UniverseManager:
 
 
 def get_folders_in_path(path: str) -> Set[str]:
+    """
+    Easy way to get all the folders in a specific folder.
+
+    :param path: Path to folder to check for folders inside.
+
+    :return: A Set of folder names inside the folder given via path.
+    """
     output = set()
     for folder in os.listdir(path):
         if Path(f"{path}/{folder}").is_dir():

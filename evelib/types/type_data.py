@@ -10,6 +10,13 @@ except ImportError:
 
 class TypeData:
     def __init__(self, type_id, state: dict = None, group_manager: GroupManager = None):
+        """
+        Object that allows users to easily get information about a type.
+
+        :param type_id: Integer ID of the type.
+        :param state: Dictionary object to load data from.
+        :param group_manager: GroupManager object to use.
+        """
         self.id = type_id
         self.name = "Default name."
         self.group_id: int = 0
@@ -19,6 +26,13 @@ class TypeData:
             self.from_dict(state, group_manager)
 
     def from_dict(self, state: dict, group_manager: GroupManager):
+        """
+        Loads information from a dictionary, intended for data from the type cache.
+
+        :param state: Dictionary object to load data from.
+        :param group_manager: GroupManager object to use.
+        :return:
+        """
         if "id" in state:
             self.id = state["id"]
         self.name = state["name"]
@@ -29,6 +43,12 @@ class TypeData:
 
 class TypeCache:
     def __init__(self, cache_location: str, cache_name: str):
+        """
+        A cache to act as a lighter weight typeIDs.yaml from the Static Data Export.
+
+        :param cache_location: String path to the root folder to store the cache file inside.
+        :param cache_name: String name of the cache file, including file extension.
+        """
         self._cache_location = cache_location
         self._cache_name = cache_name
         self.loaded: bool = False
@@ -37,6 +57,11 @@ class TypeCache:
         self.names: Dict[str, int] = dict()
 
     def load(self) -> bool:
+        """
+        Reads the cache file from disk and loads contents into itself.
+
+        :return: Boolean True if successfully loaded, False otherwise.
+        """
         if Path(f"{self._cache_location}/{self._cache_name}").is_file():
             file = open(f"{self._cache_location}/{self._cache_name}", "r")
             raw_data = yaml.load(file, Loader=SafeLoader)
@@ -49,6 +74,11 @@ class TypeCache:
             return False
 
     def save(self) -> bool:
+        """
+        Saves the file to disk assuming that self.names and self.ids have data in them.
+
+        :return: Boolean True if successfully saved, False otherwise.
+        """
         if self.names and self.ids:
             file = open(f"{self._cache_location}/{self._cache_name}", "w")
             yaml.dump({"ids": self.ids, "names": self.names}, file, Dumper=SafeDumper)
@@ -58,6 +88,13 @@ class TypeCache:
             return False
 
     def get_id(self, type_name: str) -> Optional[int]:
+        """
+        Gets an ID from the given String type name. Caps and space insensitive.
+
+        :param type_name: Possible String name of a type.
+
+        :return: Integer type ID if the given type name corresponds to an ID. Otherwise, None
+        """
         for key_name in self.names:
             if type_name.lower() == key_name.lower() or type_name.lower() == key_name.replace(" ", "").lower():
                 return self.names[key_name]

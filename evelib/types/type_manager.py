@@ -1,20 +1,24 @@
 from evelib.types.categories import CategoryManager
 from evelib.types.groups import GroupManager
 from evelib.types.type_data import TypeCache, TypeData
-from pathlib import Path
 import logging
 from typing import Union, Dict, Optional
 import yaml
 try:
     from yaml import CSafeLoader as SafeLoader, CSafeDumper as SafeDumper
-    print("Managed to import C yaml!")
 except ImportError:
     from yaml import SafeLoader, SafeDumper
-    print("Import regular yaml")
 
 
 class TypeManager:
     def __init__(self, logger: logging.Logger, sde_path: str, cache_location: str):
+        """
+        Manages and handles requests about the types/items of EVE. Relies entirely on the static data export.
+
+        :param logger: Logger object to log to.
+        :param sde_path: String path to the root folder of the EVE Static Data Export
+        :param cache_location: String path to the root folder to store cache files inside.
+        """
         self._logger = logger
         self._sde_path = sde_path
         self._cache_location = cache_location
@@ -26,6 +30,10 @@ class TypeManager:
         self.groups = GroupManager(logger, sde_path, self.categories)
 
     def load(self):
+        """
+        Loads required files from disk. If the type cache isn't on disk, populate it.
+        :return:
+        """
         self.categories.load()
         self.groups.load()
         self._logger.debug("Starting to load types...")
@@ -37,6 +45,10 @@ class TypeManager:
         self._logger.debug("Types loaded.")
 
     def save(self):
+        """
+        Saves required files to disk. If the type cache wasn't loaded from disk, save it.
+        :return:
+        """
         self._logger.debug("Starting to save types...")
         if not self._cache.loaded:
             self._logger.debug("Type cache wasn't loaded from disk, saving to disk...")
@@ -46,6 +58,13 @@ class TypeManager:
         self._logger.debug("Types saved.")
 
     def _populate_cache(self):
+        """
+        Populates the item cache. This function is responsible for linking both the IDs to basic data and the type name
+        to the IDs. This will take some time due to PyYAML needing to interpret the large amount of data present in
+        typeIDs.yaml, but being able to import the CSafeLoader should speed this up. Unlike with the universe manager,
+        I don't think this can be multi-threaded.
+        :return:
+        """
         self._logger.info("Creating type cache from SDE, this may take some time...")
         type_file_location = f"{self._sde_path}/fsd/typeIDs.yaml"
         type_file = open(type_file_location, "r")
@@ -63,6 +82,13 @@ class TypeManager:
                           "to disk.")
 
     def get_type(self, identifier: Union[int, str]) -> Optional[TypeData]:
+        """
+        A quick way to get type data. Caps and space insensitive.
+
+        :param identifier: An Integer representing the ID of a type, or a String representing the name of a type.
+
+        :return: A TypeData object if the identifier corresponds to a type, None if it doesn't correspond to anything.
+        """
         if isinstance(identifier, int):
             type_id = identifier
         else:
@@ -79,6 +105,12 @@ class TypeManager:
             return None
 
     def get_names(self) -> Dict[str, int]:
+        """
+        Easy way to get all the type names in the cache. Be aware that changing data in the returned dictionary will
+        affect everything relying on it!
+
+        :return: Dictionary of String type names that correspond to an Integer type ID.
+        """
         return self._cache.names
 
 

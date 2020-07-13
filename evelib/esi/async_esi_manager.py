@@ -34,8 +34,8 @@ class AsyncESIManager:
         async def get_region_orders(self, region_id: Union[int, str], type_id: Union[int, str] = None,
                                     order_type: str = "all", cache: bool = True) -> List[dict]:
             param_tuple = (region_id, int(type_id), order_type)
-            if param_tuple in self._expirey_tracker and self._expirey_tracker[param_tuple] > datetime.utcnow() and \
-                    param_tuple in self._order_cache:
+            if cache and param_tuple in self._expirey_tracker and \
+                    self._expirey_tracker[param_tuple] > datetime.utcnow() and param_tuple in self._order_cache:
                 return self._order_cache[param_tuple]
             else:
                 base_url = "https://esi.evetech.net/latest/markets/{}/orders"

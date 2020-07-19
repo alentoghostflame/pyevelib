@@ -10,7 +10,8 @@ LOGGING_LEVEL = logging.DEBUG
 
 
 class EVEManager:
-    def __init__(self, sde_path: str = "sde", cache_location: str = "cache", use_aiohttp: bool = True, session=None):
+    def __init__(self, sde_path: str = "sde", cache_location: str = "cache", use_aiohttp: bool = True, session=None,
+                 logging_level=None):
         """
         A developer library for quickly using the Static Data Export and EVE Swagger Interface.
 
@@ -19,6 +20,7 @@ class EVEManager:
         :param use_aiohttp: Boolean True to use the AIOHTTP implementation of accessing the EVE Swagger Interface, False
         for a NotImplementedError
         :param session: Session object to use for accessing the EVE Swagger Interface.
+        :param logging_level: Level to log at.
         """
         setup_logger()
         self._logger: logging.Logger = logging.getLogger("evelib_logger")
@@ -26,9 +28,13 @@ class EVEManager:
         self._cache_location: str = cache_location
         self.universe: UniverseManager = UniverseManager(self._logger, sde_path, cache_location)
         self.types: TypeManager = TypeManager(self._logger, sde_path, cache_location)
+
+        if logging_level:
+            self._logger.setLevel(logging_level)
+
         if use_aiohttp:
             from evelib.esi.async_esi_manager import AsyncESIManager
-            self.esi: AsyncESIManager = AsyncESIManager(self._logger, session)
+            self.esi: AsyncESIManager = AsyncESIManager(self.types, self._logger, session)
         else:
             raise NotImplementedError
 

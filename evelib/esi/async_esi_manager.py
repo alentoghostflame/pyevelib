@@ -1,4 +1,6 @@
-from typing import Union, Dict, List, Tuple
+from evelib.types import TypeManager
+from evelib.esi import esi_objects
+from typing import Union, Dict, List, Tuple, Optional
 from datetime import datetime
 import logging
 import aiohttp
@@ -10,7 +12,7 @@ class ESIManager:
 
 
 class AsyncESIManager:
-    def __init__(self, logger: logging.Logger, session: aiohttp.ClientSession = None):
+    def __init__(self, type_manager: TypeManager, logger: logging.Logger, session: aiohttp.ClientSession = None):
         """
         Manages and handles requests to access the EVE Swagger Interface. Only does web calls, does not rely on the
         Static Data Export.
@@ -18,13 +20,15 @@ class AsyncESIManager:
         :param logger: Logger object to log to.
         :param session: ClientSession object to use. If none is provided, it will make one.
         """
+        self._type_manager = type_manager
         self._logger = logger
         if session:
             self._session = session
         else:
             self._session = aiohttp.ClientSession()
-        self.market = self._MarketESI(self._session)
+        self.market = self._MarketESI(self._logger, self._session)
         self.universe = self._UniverseESI(self._session)
+        self.industry: IndustryESI = IndustryESI(self._logger, self._type_manager, self._session)
 
     async def close_session(self):
         """
@@ -34,13 +38,14 @@ class AsyncESIManager:
         await self._session.close()
 
     class _MarketESI:
-        def __init__(self, session: aiohttp.ClientSession):
+        def __init__(self, logger: logging.Logger, session: aiohttp.ClientSession):
             """
             Manages and handles requests to access the EVE Swagger Interface, specifically the market portion. Only does
             web calls, does not rely on the Static Data Export.
 
             :param session: ClientSession object to use.
             """
+            self._logger = logger
             self._session = session
             self._order_cache: Dict[Tuple[int, int, str], List[dict]] = dict()
             self._expirey_tracker: Dict[Tuple[int, int, str], datetime] = dict()
@@ -118,3 +123,25 @@ class AsyncESIManager:
             base_url = "https://esi.evetech.net/latest/universe/structures/{}/"
             response = await self._session.get(url=base_url.format(structure_id), params={"token": token, })
             return await response.json()
+
+
+class IndustryESI:
+    def __init__(self, logger: logging.Logger, type_manager: TypeManager, session: aiohttp.ClientSession):
+        self._logger = logger
+        self._type_manager = type_manager
+        self._session = session
+
+    async def get_character_jobs(self, character_id: Union[int, str], token: str) -> \
+            Optional[List[esi_objects.IndustryJob]]:
+        base_url = "https://esi.evetech.net/latest/characters/{}/industry/jobs/"
+        response = await self._session.get(url=base_url.format(character_id), params={"token": token, })
+        if response.status == 200:
+            raw_data = await response.json()
+            output_list = list()
+            for raw_job_data in raw_data:
+                output_list.append(esi_objects.IndustryJob(type_manager=self._type_manager, state=raw_job_data))
+            return output_list
+        else:
+            self._logger.warning(f"Got a non 200 status code, {response.status}: {await response.json()}")
+            return None
+        # return await response.json()

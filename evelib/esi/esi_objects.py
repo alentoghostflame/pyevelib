@@ -3,6 +3,10 @@ from datetime import datetime
 from typing import Optional
 
 
+class ESIServiceUnavailable(Exception):
+    pass
+
+
 class IndustryJob:
     def __init__(self, type_manager: TypeManager = None, state: dict = None):
         self.activity_id: int = 0

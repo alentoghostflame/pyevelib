@@ -1,4 +1,5 @@
 from evelib.types import TypeManager
+# from evelib.universe import UniverseManager
 from evelib.esi import esi_objects
 from typing import Union, Dict, List, Tuple, Optional
 from datetime import datetime
@@ -29,6 +30,7 @@ class AsyncESIManager:
         self.market = self._MarketESI(self._logger, self._session)
         self.universe = self._UniverseESI(self._session)
         self.industry: IndustryESI = IndustryESI(self._logger, self._type_manager, self._session)
+        self.pi: PlanetaryInteractionESI = PlanetaryInteractionESI(self._logger, self._session)
 
     async def close_session(self):
         """
@@ -131,17 +133,74 @@ class IndustryESI:
         self._type_manager = type_manager
         self._session = session
 
-    async def get_character_jobs(self, character_id: Union[int, str], token: str) -> \
-            Optional[List[esi_objects.IndustryJob]]:
+    async def get_character_jobs_raw(self, character_id: Union[int, str], token: str) -> Optional[dict]:
         base_url = "https://esi.evetech.net/latest/characters/{}/industry/jobs/"
         response = await self._session.get(url=base_url.format(character_id), params={"token": token, })
-        if response.status == 200:
-            raw_data = await response.json()
+        if esi_status_interpreter(response.status):
+            return await response.json()
+        else:
+            return None
+
+    async def get_character_jobs(self, character_id: Union[int, str], token: str) -> \
+            Optional[List[esi_objects.IndustryJob]]:
+        # base_url = "https://esi.evetech.net/latest/characters/{}/industry/jobs/"
+        # response = await self._session.get(url=base_url.format(character_id), params={"token": token, })
+        # if response.status == 200:
+        #     raw_data = await response.json()
+        #     output_list = list()
+        #     for raw_job_data in raw_data:
+        #         output_list.append(esi_objects.IndustryJob(type_manager=self._type_manager, state=raw_job_data))
+        #     return output_list
+        # else:
+        #     self._logger.warning(f"Got a non 200 status code, {response.status}: {await response.json()}")
+        #     return None
+        raw_data = await self.get_character_jobs_raw(character_id, token)
+        if raw_data:
             output_list = list()
             for raw_job_data in raw_data:
                 output_list.append(esi_objects.IndustryJob(type_manager=self._type_manager, state=raw_job_data))
             return output_list
         else:
-            self._logger.warning(f"Got a non 200 status code, {response.status}: {await response.json()}")
             return None
-        # return await response.json()
+
+
+class PlanetaryInteractionESI:
+    def __init__(self, logger: logging.Logger, session: aiohttp.ClientSession):
+        self._logger = logger
+        # self._universe = universe
+        self._session = session
+
+    async def get_basic_pi_raw(self, character_id: Union[int, str], token: str) -> Optional[dict]:
+        base_url = "https://esi.evetech.net/latest/characters/{}/planets/"
+        response = await self._session.get(url=base_url.format(character_id), params={"token": token, })
+        if esi_status_interpreter(response.status):
+            return await response.json()
+        else:
+            return None
+
+    # async def get_basic_pi(self, character_id: Union[int, str], token: str) -> Optional[dict]:
+    #     raw_data = await self.get_basic_pi_raw(character_id, token)
+    #     if raw_data:
+    #         return raw_data
+    #     else:
+    #         return None
+
+    async def get_planet_pi_raw(self, character_id: Union[int, str], planet_id: Union[str, int], token: str) -> \
+            Optional[dict]:
+        base_url = f"https://esi.evetech.net/latest/characters/{character_id}/planets/{planet_id}/"
+        response = await self._session.get(url=base_url.format(character_id, planet_id), params={"token": token, })
+        if esi_status_interpreter(response.status):
+            return await response.json()
+        else:
+            return None
+
+
+def esi_status_interpreter(response_status: int) -> bool:
+    if response_status == 200:
+        return True
+    elif response_status == 404:
+        return False
+    elif response_status == 503:
+        raise esi_objects.ESIServiceUnavailable
+    else:
+        raise NotImplementedError(f"Received unhandled response status: {response_status}")

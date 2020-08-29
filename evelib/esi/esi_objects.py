@@ -60,5 +60,5 @@ class IndustryJob:
         activity_dict = {0: "None", 1: "Manufacturing", 3: "Researching Time Efficiency",
                          4: "Researching Material Efficiency", 5: "Copying", 7: "Reverse Engineering",
                          8: "Invention", 11: "Reactions"}
-        return activity_dict.get(activity_id, "Activity not found??")
+        return activity_dict.get(activity_id, f"Activity not found?? ID: {activity_id}")
 

@@ -34,7 +34,7 @@ class EVEManager:
 
         if use_aiohttp:
             from evelib.esi.async_esi_manager import AsyncESIManager
-            self.esi: AsyncESIManager = AsyncESIManager(self.types, self._logger, session)
+            self.esi: AsyncESIManager = AsyncESIManager(self.universe, self.types, self._logger, session)
         else:
             raise NotImplementedError
 

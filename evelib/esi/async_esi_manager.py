@@ -14,7 +14,8 @@ class ESIManager:
 
 
 class AsyncESIManager:
-    def __init__(self, universe_manager: UniverseManager, type_manager: TypeManager, logger: logging.Logger, session: aiohttp.ClientSession = None):
+    def __init__(self, universe_manager: UniverseManager, type_manager: TypeManager, logger: logging.Logger,
+                 session: aiohttp.ClientSession = None):
         """
         Manages and handles requests to access the EVE Swagger Interface. Only does web calls, does not rely on the
         Static Data Export.
@@ -29,7 +30,7 @@ class AsyncESIManager:
             self._session = session
         else:
             self._session = aiohttp.ClientSession()
-        self.market = MarketESI(self._universe_manager, self._logger, self._session)
+        self.market = MarketESI(self._universe_manager, self._type_manager, self._logger, self._session)
         self.universe = UniverseESI(self._session)
         self.industry: IndustryESI = IndustryESI(self._logger, self._type_manager, self._session)
         self.pi: PlanetaryInteractionESI = PlanetaryInteractionESI(self._logger, self._session)
@@ -43,7 +44,8 @@ class AsyncESIManager:
 
 
 class MarketESI:
-    def __init__(self, universe_manager: UniverseManager, logger: logging.Logger, session: aiohttp.ClientSession):
+    def __init__(self, universe_manager: UniverseManager, type_manager: TypeManager, logger: logging.Logger,
+                 session: aiohttp.ClientSession):
         """
         Manages and handles requests to access the EVE Swagger Interface, specifically the market portion. Only does
         web calls, does not rely on the Static Data Export.
@@ -51,10 +53,13 @@ class MarketESI:
         :param session: ClientSession object to use.
         """
         self._universe_manager = universe_manager
+        self._type_manager = type_manager
         self._logger = logger
         self._session = session
         self._order_cache: Dict[Tuple[int, int, str], List[dict]] = dict()
         self._expirey_tracker: Dict[Tuple[int, int, str], datetime] = dict()
+        self._history_cache: Dict[Tuple[int, int], esi_objects.MarketHistory] = dict()
+        self._history_tracker: Dict[Tuple[int, int], datetime] = dict()
         # self.BUY = "buy"
         # self.SELL = "sell"
         # self.ALL = "all"
@@ -91,6 +96,27 @@ class MarketESI:
                 self._order_cache[param_tuple] = response_json.copy()
 
             return response_json
+
+    async def get_region_history(self, region_id: Union[int, str], type_id: Union[int, str],
+                                 cache: bool = True) -> esi_objects.MarketHistory:
+        param_tuple = (region_id, type_id)
+        if cache and param_tuple in self._expirey_tracker and self._history_tracker[param_tuple] > datetime.utcnow() \
+                and param_tuple in self._history_cache:
+            return self._history_cache[param_tuple]
+        else:
+            base_url = "https://esi.evetech.net/latest/markets/{}/history"
+            response = await self._session.get(url=base_url.format(region_id), params={"type_id": type_id})
+            response_json = await response.json()
+            location = self._universe_manager.get_any(region_id)
+            item = self._type_manager.get_type(type_id)
+            market_history = esi_objects.MarketHistory(location, item, response_json)
+
+            if cache:
+                expire_time = datetime.strptime(response.headers.getone("Expires"), "%a, %d %b %Y %H:%M:%S GMT")
+                self._history_tracker[param_tuple] = expire_time
+                self._history_cache[param_tuple] = market_history
+
+            return market_history
 
     async def get_system_orders(self, region_id: Union[int, str], system_id: Union[int, str],
                                 type_id: Union[int, str] = None, order_type: str = "all",

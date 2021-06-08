@@ -1,5 +1,5 @@
-from evelib.types import TypeManager
-from evelib.universe import UniverseManager
+from evelib.types import TypeManager, TypeData
+from evelib.universe import UniverseManager, RegionData
 from evelib.esi import esi_objects
 from typing import Union, Dict, List, Tuple, Optional
 from datetime import datetime
@@ -41,6 +41,23 @@ class AsyncESIManager:
         :return:
         """
         await self._session.close()
+
+
+class AssetsESI:
+    CORP_ASSETS_URL = "https://esi.evetech.net/latest/corporations/{}/assets/"
+
+    def __init__(self, universe_manager: UniverseManager, type_manager: TypeManager, logger: logging.Logger,
+                 session: aiohttp.ClientSession):
+        self._uni = universe_manager
+        self._type = type_manager
+        self._logger = logger
+        self._session = session
+
+    async def get_corp_assets(self, corporation_id: int, token: str):
+        response = await self._session.get(url=self.CORP_ASSETS_URL.format(corporation_id), params={"token": token})
+        response_json = await response.json()
+        ret = [esi_objects.CorpItem(self._type.get_type(item["type_id"]), item) for item in response_json]
+        return ret
 
 
 class MarketESI:
@@ -97,26 +114,53 @@ class MarketESI:
 
             return response_json
 
-    async def get_region_history(self, region_id: Union[int, str], type_id: Union[int, str],
+    # async def get_region_history(self, region_id: Union[int, str], type_id: Union[int, str],
+    #                              cache: bool = True) -> esi_objects.MarketHistory:
+    #     param_tuple = (region_id, type_id)
+    #     if cache and param_tuple in self._expirey_tracker and self._history_tracker[param_tuple] > datetime.utcnow() \
+    #             and param_tuple in self._history_cache:
+    #         return self._history_cache[param_tuple]
+    #     else:
+    #         base_url = "https://esi.evetech.net/latest/markets/{}/history"
+    #         response = await self._session.get(url=base_url.format(region_id), params={"type_id": type_id})
+    #         response_json = await response.json()
+    #         location = self._universe_manager.get_any(region_id)
+    #         item = self._type_manager.get_type(type_id)
+    #         market_history = esi_objects.MarketHistory(location, item, response_json)
+    #
+    #         if cache:
+    #             expire_time = datetime.strptime(response.headers.getone("Expires"), "%a, %d %b %Y %H:%M:%S GMT")
+    #             self._history_tracker[param_tuple] = expire_time
+    #             self._history_cache[param_tuple] = market_history
+    #
+    #         return market_history
+
+    async def get_region_history(self, region: RegionData, item: TypeData,
                                  cache: bool = True) -> esi_objects.MarketHistory:
-        param_tuple = (region_id, type_id)
-        if cache and param_tuple in self._expirey_tracker and self._history_tracker[param_tuple] > datetime.utcnow() \
+        """
+        Gets price history of a given item in the given region. Because ESI doesn't return what solar system the
+        transactions occurred it, we can't make a get_system_history command. This also won't get price history from
+        Player Owned Structures (not tested, but probably true due to not needing authentication).
+
+        :param region: Region to get price history from.
+        :param item: Item to get price history of.
+        :param cache: True to try to use the cache, False to fetch a new result regardless of cache.
+        :return: RegionHistory object with price history data.
+        """
+        param_tuple = (region.id, item.id)
+        if cache and param_tuple in self._history_tracker and self._history_tracker[param_tuple] > datetime.utcnow() \
                 and param_tuple in self._history_cache:
             return self._history_cache[param_tuple]
         else:
             base_url = "https://esi.evetech.net/latest/markets/{}/history"
-            response = await self._session.get(url=base_url.format(region_id), params={"type_id": type_id})
+            response = await self._session.get(url=base_url.format(region.id), params={"type_id": item.id})
             response_json = await response.json()
-            location = self._universe_manager.get_any(region_id)
-            item = self._type_manager.get_type(type_id)
-            market_history = esi_objects.MarketHistory(location, item, response_json)
-
+            ret = esi_objects.MarketHistory(region, item, response_json)
             if cache:
                 expire_time = datetime.strptime(response.headers.getone("Expires"), "%a, %d %b %Y %H:%M:%S GMT")
                 self._history_tracker[param_tuple] = expire_time
-                self._history_cache[param_tuple] = market_history
-
-            return market_history
+                self._history_cache[param_tuple] = ret
+            return ret
 
     async def get_system_orders(self, region_id: Union[int, str], system_id: Union[int, str],
                                 type_id: Union[int, str] = None, order_type: str = "all",

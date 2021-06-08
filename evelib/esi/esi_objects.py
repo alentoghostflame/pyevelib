@@ -8,6 +8,29 @@ class ESIServiceUnavailable(Exception):
     pass
 
 
+class CorpItem:
+    def __init__(self, item: TypeData, state: dict):
+        self.item: TypeData = item
+        self.is_singleton: Optional[bool] = None
+        self.item_id: Optional[int] = None
+        self.location_flag: Optional[str] = None
+        self.location_id: Optional[int] = None
+        self.location_type: Optional[str] = None
+        self.quantity: Optional[int] = None
+        self.type_id: Optional[int] = None
+        if state:
+            self.from_state(state)
+
+    def from_state(self, state: dict):
+        self.is_singleton = state["is_singleton"]
+        self.item_id = state["item_id"]
+        self.location_flag = state["location_flag"]
+        self.location_id = state["location_id"]
+        self.location_type = state["location_type"]
+        self.quantity = state["quantity"]
+        self.type_id = state["type_id"]
+
+
 class MarketData:
     def __init__(self, region: RegionData, item: TypeData, state: dict):
         self.item: TypeData = item
@@ -30,44 +53,67 @@ class MarketData:
         self.date = datetime.strptime(state["date"], "%Y-%m-%d")
 
 
+# class MarketHistory:
+#     def __init__(self, region: RegionData, item: TypeData, json: List[dict] = None):
+#         self.item = item
+#         self.location: RegionData = region
+#         self.oldest: Optional[MarketData] = None
+#         self.newest: Optional[MarketData] = None
+#         self.history: List[MarketData] = list()
+#         self.average = 0
+#         self.highest = 0
+#         self.lowest = 0
+#         self.order_count = 0
+#         self.volume = 0
+#         if json:
+#             self.from_json(json)
+#
+#     def from_json(self, json: List[dict]):
+#         average_sum = 0
+#         for market_data in json:
+#             data = MarketData(self.location, self.item, market_data)
+#             self.history.append(data)
+#             if not self.oldest or data.date < self.oldest.date:
+#                 self.oldest = data
+#             if not self.newest or self.newest.date < data.date:
+#                 self.newest = data
+#             average_sum += data.average
+#             if not self.highest or self.highest < data.highest:
+#                 self.highest = data.highest
+#             if not self.lowest or data.lowest < self.lowest:
+#                 self.lowest = data.lowest
+#             self.order_count += data.order_count
+#             self.volume += data.volume
+#         self.average = average_sum / len(self.history)
+#
+#     def __getitem__(self, item: int) -> MarketData:
+#         return self.history[item]
+#
+#     def __iter__(self) -> Iterator[MarketData]:
+#         return iter(self.history)
+
+
+class MarketHistoryData:
+    def __init__(self, json: dict):
+        self.average: float = json["average"]
+        self.date: datetime = datetime.strptime(json["date"], "%Y-%m-%d")
+        self.date_str: str = json["date"]
+        self.highest: float = json["highest"]
+        self.lowest: float = json["lowest"]
+        self.order_count: int = json["order_count"]
+        self.quantity: int = json["volume"]
+
+
 class MarketHistory:
     def __init__(self, region: RegionData, item: TypeData, json: List[dict] = None):
-        self.item = item
-        self.location: RegionData = region
-        self.oldest: Optional[MarketData] = None
-        self.newest: Optional[MarketData] = None
-        self.history: List[MarketData] = list()
-        self.average = 0
-        self.highest = 0
-        self.lowest = 0
-        self.order_count = 0
-        self.volume = 0
+        self.region: RegionData = region
+        self.item: TypeData = item
+        self.orders: List[MarketHistoryData] = []
         if json:
             self.from_json(json)
 
     def from_json(self, json: List[dict]):
-        average_sum = 0
-        for market_data in json:
-            data = MarketData(self.location, self.item, market_data)
-            self.history.append(data)
-            if not self.oldest or data.date < self.oldest.date:
-                self.oldest = data
-            if not self.newest or self.newest.date < data.date:
-                self.newest = data
-            average_sum += data.average
-            if not self.highest or self.highest < data.highest:
-                self.highest = data.highest
-            if not self.lowest or data.lowest < self.lowest:
-                self.lowest = data.lowest
-            self.order_count += data.order_count
-            self.volume += data.volume
-        self.average = average_sum / len(self.history)
-
-    def __getitem__(self, item: int) -> MarketData:
-        return self.history[item]
-
-    def __iter__(self) -> Iterator[MarketData]:
-        return iter(self.history)
+        self.orders = [MarketHistoryData(data) for data in json]
 
 
 class IndustryJob:

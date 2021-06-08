@@ -112,5 +112,3 @@ class TypeManager:
         :return: Dictionary of String type names that correspond to an Integer type ID.
         """
         return self._cache.names
-
-

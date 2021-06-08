@@ -5,6 +5,9 @@ import logging
 import sys
 
 
+
+
+
 LOGGING_FORMAT = "[{asctime}][{filename}][{lineno:3}][{funcName}][{levelname}] {message}"
 LOGGING_LEVEL = logging.DEBUG
 
@@ -28,6 +31,12 @@ class EVEManager:
         self._cache_location: str = cache_location
         self.universe: UniverseManager = UniverseManager(self._logger, sde_path, cache_location)
         self.types: TypeManager = TypeManager(self._logger, sde_path, cache_location)
+
+        try:
+            from yaml import CSafeLoader
+        except ImportError:
+            self._logger.warning("Can't import the pyyaml CSafeLoader, using the C libraries will significantly "
+                                 "increase performance!")
 
         if logging_level:
             self._logger.setLevel(logging_level)

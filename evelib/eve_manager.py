@@ -5,11 +5,8 @@ import logging
 import sys
 
 
-
-
-
-LOGGING_FORMAT = "[{asctime}][{filename}][{lineno:3}][{funcName}][{levelname}] {message}"
-LOGGING_LEVEL = logging.DEBUG
+# LOGGING_FORMAT = "[{asctime}][{filename}][{lineno:3}][{funcName}][{levelname}] {message}"
+# LOGGING_LEVEL = logging.DEBUG
 
 
 class EVEManager:

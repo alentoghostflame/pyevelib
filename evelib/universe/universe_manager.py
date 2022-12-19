@@ -1,7 +1,7 @@
 from evelib.universe.universe_data import UniverseLiteCache, RegionData, SolarSystemData
 from pathlib import Path
 import logging
-from typing import Union, Optional, Set
+from typing import Union, Optional, Set, List
 import yaml
 try:
     from yaml import CSafeLoader as SafeLoader, CSafeDumper as SafeDumper
@@ -28,6 +28,9 @@ class UniverseManager:
 
         self._lite_cache = UniverseLiteCache(self._cache_location, "universe_lite_cache.yaml")
         self._ram_cache: dict = dict()
+
+    def get_names(self) -> List[str]:
+        return list(self._lite_cache.names.keys())
 
     def load(self):
         """

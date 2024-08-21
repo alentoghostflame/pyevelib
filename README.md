@@ -1,24 +1,31 @@
-# EVE-Python-Library
-A library to help people easily access the Static Data Export (SDE) and EVE Swagger Interface (ESI)
+# PyEVELib
+An async library to access the Static Data Export (SDE) and EVE Swagger Interface (ESI) in a unified way.
 
-####  Features
-* Get region or solar system data from an int ID or string.
-* Get basic type/item information from an int ID or string.
-* In-progress ESI functionality.
+###  Features
+* It's async.
+* Can download the SDE, unpack it automatically, and check if the current SDE is out of date.
+* Doesn't require the SDE, and can use ESI for info instead.
+* Supports ESI ratelimiting.
+* Supports ESI route expirations and caches accordingly.
 
-#### Requirements
-* Python 3
-* AIOHTTP
+### Requirements
+* Python 3.10+
+* aiohttp
 * PyYAML
 
-#### How to use
+### How to use
 ```python
-from evelib import EVEManager, SolarSystemData
-eve_manager = EVEManager()
-eve_manager.load()
+import asyncio
+from evelib import EVEAPI
 
-planet_data: SolarSystemData = eve_manager.universe.get_any(30004259)
-print(planet_data.name)
-
-eve_manager.save()
+async def main():
+    eve = EVEAPI()
+    # If you want to use the SDE.
+    eve.sde.update_sde()  # This checks for updates, downloads, and unpacks the SDE as needed.
+    eve.load_sde()  # Loads the SDE from disk.
+    
+    resolved = await eve.resolve_universe_ids(["Jita"])
+    jita_id = resolved.systems["Jita"]
+    jita = await eve.get_solarsystem(jita_id)
+    print(f"{jita.name}, {jita.id}, {jita.security}")
 ```

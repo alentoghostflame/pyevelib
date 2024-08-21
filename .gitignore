@@ -1,3 +1,7 @@
 .idea/
 venv/
+sde/
+cache/
+.pyevelib_cache/
+main.py
 *.pyc

@@ -1,2 +1,2 @@
-aiohttp
+aiohttp<4.0
 pyyaml

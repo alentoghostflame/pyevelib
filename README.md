@@ -6,7 +6,7 @@ An async library to access the Static Data Export (SDE) and EVE Swagger Interfac
 * Can download the SDE, unpack it automatically, and check if the current SDE is out of date.
 * Doesn't require the SDE, and can use ESI for info instead.
 * Supports ESI ratelimiting.
-* Supports ESI route expirations and caches accordingly.
+* Caches ESI requests by default, supports both route expiries and ETags.
 
 ### Requirements
 * Python 3.10+

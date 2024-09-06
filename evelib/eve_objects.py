@@ -140,6 +140,7 @@ class EVEType(
         ret.mass = data.get("mass", None)
         ret.localized_name = {Language(raw_lang): name for raw_lang, name in data["name"].items()}
         ret.name = ret.localized_name[Language.en]
+        ret.packaged_volume = None
         ret.portion_size = data.get("portionSize", None)
         ret.published = data["published"]
         ret.radius = data.get("radius", None)

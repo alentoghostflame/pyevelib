@@ -34,6 +34,8 @@ class ESIResponse:
     """Headers of the HTTP Response."""
     content_language: Language | None
     """Language of the provided content."""
+    etag: str | None
+    """ETag of the request."""
 
     def __init__(self):
         self.data: dict | None = None
@@ -45,7 +47,7 @@ class ESIResponse:
         self.last_modified: datetime | None = None
         """When the data was last modified in EVE."""
         self.page: int | None = None
-        """What page this response is for. Only populated when the response as the X-pages header."""
+        """What page this response is for. Only populated when the response has the X-pages header."""
 
     @classmethod
     async def from_http_response(cls, response: aiohttp.ClientResponse, *, page: int | None):
@@ -54,6 +56,7 @@ class ESIResponse:
         ret.data = await response.json()
         ret.headers = response.headers
         ret.content_language = Language(lang) if (lang := ret.headers.get("content-language")) else None
+        ret.etag = ret.headers.get("etag")
         ret.request = utils.eve_timestamp_to_datetime(response.headers["date"])
 
         if "expires" in response.headers:
@@ -266,19 +269,33 @@ class EVEESI:
 
         if self._use_internal_cache:
             # datetime.now() doesn't give a timezone-aware object by default. /shrug
-            time_now = datetime.now(timezone.utc)
-            if (
-                (cached_response := self._cache.get(cache_key))
-                and cached_response.expires is not None
-                and time_now < cached_response.expires
-            ):
-                # TODO: Add etag stuff?
-                logger.debug('Returning cached response for request ("%s", "%s").', method, route)
-                return cached_response
+            # time_now = datetime.now(timezone.utc)
+            # if (
+            #     (cached_response := self._cache.get(cache_key))
+            #     and cached_response.expires is not None
+            #     and time_now < cached_response.expires
+            # ):
+            #     # TODO: Add etag stuff?
+            #     logger.debug('Returning cached response for request ("%s", "%s").', method, route)
+            #     return cached_response
+            if cached_response := self._cache.get(cache_key):
+                if (
+                    cached_response.expires is not None
+                    and datetime.now(timezone.utc) < cached_response.expires
+                ):
+                    logger.debug("Cached response for %s %s is within expiry, returning it.", method, route)
+                    return cached_response
+                elif cached_response.etag and "If-None-Match" not in headers:
+                    logger.debug(
+                        "Cached response for %s %s is outside expiry and has etag, putting it in headers.",
+                        method,
+                        route,
+                    )
+                    headers["If-None-Match"] = cached_response.etag
 
         # TODO: Think about auto-retries?
         async with self._error_rate_limit:
-            logger.debug('Making request to ("%s", "%s").', method, route)
+            logger.debug("Making request to %s %s.", method, route)
             async with self._session.request(
                 method=method, url=BASE_URL + route, json=json, params=params, headers=headers
             ) as response:
@@ -304,7 +321,15 @@ class EVEESI:
                             )
                             raise errors.HTTPGeneric(response, ret)
 
-                ret = await ESIResponse.from_http_response(response, page=params.get("page", None))
+                if response.status == 304 and "If-None-Match" in headers:
+                    logger.debug(
+                        "Error 304: Not modified for %s %s with etag in headers. Returning cached response. ",
+                        method,
+                        route,
+                    )
+                    return self._cache.get(cache_key)
+                else:
+                    ret = await ESIResponse.from_http_response(response, page=params.get("page", None))
 
                 if warning_text := response.headers.get("warning"):
                     if warning_text.startswith("199"):
@@ -464,7 +489,7 @@ class EVEESI:
             params["language"] = language.value
 
         return await self.request(
-            "POST", f"/v1/universe/ids/",  json=names, params=params, datasource=datasource
+            "POST", f"/v1/universe/ids/", json=names, params=params, datasource=datasource
         )
 
     async def get_universe_region_info(

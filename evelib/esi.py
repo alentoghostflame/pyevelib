@@ -268,16 +268,6 @@ class EVEESI:
         cache_key = (method, route, str(params), str(headers))
 
         if self._use_internal_cache:
-            # datetime.now() doesn't give a timezone-aware object by default. /shrug
-            # time_now = datetime.now(timezone.utc)
-            # if (
-            #     (cached_response := self._cache.get(cache_key))
-            #     and cached_response.expires is not None
-            #     and time_now < cached_response.expires
-            # ):
-            #     # TODO: Add etag stuff?
-            #     logger.debug('Returning cached response for request ("%s", "%s").', method, route)
-            #     return cached_response
             if cached_response := self._cache.get(cache_key):
                 if (
                     cached_response.expires is not None
@@ -320,6 +310,14 @@ class EVEESI:
                                 "Error %s: not a handled error for %s %s", response.status, method, route
                             )
                             raise errors.HTTPGeneric(response, ret)
+
+                if warning_header := response.headers.get("Warning"):
+                    if warning_header == 199:
+                        logger.info("Warning 199: There is a update available for %s %s", method, route)
+                    elif warning_header == 299:
+                        logger.warning("Warning 299: There is a deprecation warning for %s %s", method, route)
+                    else:
+                        logger.warning("Warning %s: Unknown warning for %s %s", warning_header, method, route)
 
                 if response.status == 304 and "If-None-Match" in headers:
                     logger.debug(

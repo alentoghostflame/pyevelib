@@ -1,20 +1,35 @@
+from __future__ import annotations
+
 import asyncio
-from datetime import datetime
+import base64
+import datetime
+import json
+import urllib.parse
 from datetime import timezone
+from enum import Enum
 from logging import getLogger
-from typing import Literal, Iterable
+from typing import Literal
 
 import aiohttp
 
 from . import errors
 from . import utils
 from .constants import USER_AGENT
-from .enums import Datasource, Language, MarketOrderType
+from .enums import (
+    Datasource,
+    ESIScope,
+    Language,
+    MarketOrderType,
+    OAuthGrantType,
+    OAuthTokenType,
+)
 
 
 __all__ = (
     "EVEESI",
+    "EVEAccessToken",
     "ESIResponse",
+    "EVEOAuthTokenResponse",
 )
 
 
@@ -22,9 +37,8 @@ logger = getLogger(__name__)
 
 
 BASE_URL = "https://esi.evetech.net"
-
-# USER_AGENT_BASE = "PyEveLib (https://github.com/alentoghostflame/pyevelib) Python/{0[0]}.{0[1]} aiohttp/{1}"
-# USER_AGENT = USER_AGENT_BASE.format(sys.version_info, aiohttp.__version__)
+OAUTH_TOKEN_URL = "https://login.eveonline.com/v2/oauth/token"
+OAUTH_VERIFY_URL = "https://login.eveonline.com/oauth/verify"
 
 DatasourceType = Literal["tranquility"]
 
@@ -40,11 +54,11 @@ class ESIResponse:
     def __init__(self):
         self.data: dict | None = None
         """Raw data from the request."""
-        self.requested: datetime | None = None
+        self.requested: datetime.datetime | None = None
         """When the data was requested, according to the EVE server."""
-        self.expires: datetime | None = None
+        self.expires: datetime.datetime | None = None
         """When the data expires and can/should be fetched again."""
-        self.last_modified: datetime | None = None
+        self.last_modified: datetime.datetime | None = None
         """When the data was last modified in EVE."""
         self.page: int | None = None
         """What page this response is for. Only populated when the response has the X-pages header."""
@@ -71,6 +85,92 @@ class ESIResponse:
 
         # ret.page = response.headers.get("X-Pages")
         ret.page = page
+
+        return ret
+
+
+class EVEAccessToken:
+    # TODO: Add token validation? https://docs.esi.evetech.net/docs/sso/validating_eve_jwt.html
+
+    _token: str
+    """Original access_token"""
+    authorized_party: str
+    """Party to which this token was issued. Should be the ID of your EVE application."""
+    character_name: str
+    """The character name that this token grants data access to."""
+    expires_at: datetime
+    """Time the token expires at."""
+    issued_at: datetime
+    """Time the token was issued at."""
+    jwt_id: str
+    """ID of the JWT"""
+    scopes: tuple[ESIScope]
+    """ESI Scopes that this token authorizes."""
+    subject: str
+    """Who the token refers to. Typically "CHARACTER:EVE:<character ID>" """
+
+    def __str__(self) -> str:
+        return self._token
+
+    @property
+    def token(self) -> str:
+        return self._token
+
+    @property
+    def character_id(self) -> int:
+        return int(self.subject.split(":")[2])
+
+    @classmethod
+    def from_access_token(cls, access_token: str):
+        ret = cls()
+
+        header, payload, signature = access_token.split(".")
+        header = base64.urlsafe_b64decode(utils.pad_base64_str(header)).decode("utf-8")
+        header = json.loads(header)
+        payload = base64.urlsafe_b64decode(utils.pad_base64_str(payload)).decode("utf-8")
+        payload = json.loads(payload)
+
+        ret._token = access_token
+        ret.authorized_party = payload["azp"]
+        ret.character_name = payload["name"]
+        ret.expires_at = datetime.datetime.fromtimestamp(payload["exp"], datetime.UTC)
+        ret.issued_at = datetime.datetime.fromtimestamp(payload["iat"], datetime.UTC)
+        ret.jwt_id = payload["jti"]
+
+        scopes = payload["scp"]
+        if isinstance(scopes, str):
+            # When it has a single scope, it's a string.
+            ret.scopes = (ESIScope(scopes),)
+        else:
+            # When it has multiple scopes, it's a list of strings.
+            ret.scopes = tuple(ESIScope(scope) for scope in scopes)
+
+        ret.subject = payload["sub"]
+
+        return ret
+
+
+class EVEOAuthTokenResponse:
+    _retrieved: datetime.datetime
+    access_token: EVEAccessToken
+    token_type: OAuthTokenType
+    expires_in: int
+    refresh_token: str
+
+    @property
+    def expired(self) -> bool:
+        return (self._retrieved + datetime.timedelta(seconds=self.expires_in)) < datetime.datetime.now(
+            datetime.UTC
+        )
+
+    @classmethod
+    async def from_esi_response(cls, response: ESIResponse):
+        ret = cls()
+        ret._retrieved = response.requested or datetime.datetime.now(datetime.UTC)
+        ret.access_token = EVEAccessToken.from_access_token(response.data["access_token"])
+        ret.token_type = OAuthTokenType(response.data["token_type"])
+        ret.expires_in = response.data["expires_in"]
+        ret.refresh_token = response.data["refresh_token"]
 
         return ret
 
@@ -253,12 +353,17 @@ class EVEESI:
         method: str,
         route: str,
         *,
+        base_url: str = BASE_URL,
+        data: dict | list | str | None = None,
         json: dict | list | None = None,
         datasource: DatasourceType | None = None,
         auth: str | None = None,
         params: dict[str, str] = None,
         headers: dict[str, str] = None,
     ) -> ESIResponse:
+        if data is not None and json is not None:
+            raise ValueError("Only one of 'data', 'json' kwargs can be specified at once.")
+
         if self._session is None or self._session.closed:
             self._session = aiohttp.ClientSession()
 
@@ -271,7 +376,7 @@ class EVEESI:
             if cached_response := self._cache.get(cache_key):
                 if (
                     cached_response.expires is not None
-                    and datetime.now(timezone.utc) < cached_response.expires
+                    and datetime.datetime.now(timezone.utc) < cached_response.expires
                 ):
                     logger.debug("Cached response for %s %s is within expiry, returning it.", method, route)
                     return cached_response
@@ -287,7 +392,7 @@ class EVEESI:
         async with self._error_rate_limit:
             logger.debug("Making request to %s %s.", method, route)
             async with self._session.request(
-                method=method, url=BASE_URL + route, json=json, params=params, headers=headers
+                method=method, url=base_url + route, data=data, json=json, params=params, headers=headers
             ) as response:
                 await self._error_rate_limit.update(response)
 
@@ -295,6 +400,9 @@ class EVEESI:
 
                 if response.status >= 400:
                     match response.status:
+                        case 400:
+                            logger.warning("Error 400: Bad request for %s %s", method, route)
+                            raise errors.HTTPBadRequest(response, ret)
                         case 401:
                             logger.warning("Error 401: Authorization rejected for %s %s", method, route)
                             raise errors.HTTPUnauthorized(response, ret)
@@ -453,9 +561,42 @@ class EVEESI:
                 "GET", f"/v1/markets/{region_id}/orders", datasource=datasource, params=params
             )
 
+    # --- Planetary Interaction
+
+    async def get_character_planets(
+        self, character_id, access_token: EVEAccessToken | str, *, datasource: DatasourceType = None
+    ) -> ESIResponse:
+        if isinstance(access_token, EVEAccessToken):
+            access_token = access_token.token
+
+        return await self.request(
+            "GET",
+            f"/v1/characters/{character_id}/planets/",
+            datasource=datasource,
+            auth=f"Bearer {access_token}",
+        )
+
+    async def get_character_planet(
+        self,
+        character_id: int,
+        planet_id: int,
+        access_token: EVEAccessToken | str,
+        *,
+        datasource: DatasourceType = None,
+    ):
+        if isinstance(access_token, EVEAccessToken):
+            access_token = access_token.token
+
+        return await self.request(
+            "GET",
+            f"/v3/characters/{character_id}/planets/{planet_id}",
+            datasource=datasource,
+            auth=f"Bearer {access_token}"
+        )
+
     # --- Status
 
-    async def get_status(self, datasource: DatasourceType = None) -> ESIResponse:
+    async def get_status(self, *, datasource: DatasourceType = None) -> ESIResponse:
         return await self.request("GET", "/v2/status/", datasource=datasource)
 
     # --- Universe
@@ -477,7 +618,7 @@ class EVEESI:
 
     async def post_universe_ids_resolve(
         self,
-        names: Iterable[str],
+        names: list[str],
         *,
         language: Language | None = None,
         datasource: Datasource | None = None,
@@ -533,3 +674,61 @@ class EVEESI:
         return await self.request(
             "GET", f"/v3/universe/types/{type_id}/", params=params, datasource=datasource
         )
+
+    # --- Misc, indirect ESI stuff.
+
+    async def post_oauth_token(
+        self,
+        *,
+        auth_code: str,
+        grant_type: OAuthGrantType | str,
+        client_id: str,
+        client_secret: str,
+    ) -> EVEOAuthTokenResponse:
+        if isinstance(grant_type, Enum):
+            grant_type = grant_type.value
+
+        encoded_creds = base64.b64encode(bytes(f"{client_id}:{client_secret}", "utf-8")).decode("utf-8")
+        headers = {
+            "Authorization": f"Basic {encoded_creds}",
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Host": "login.eveonline.com",
+        }
+        data = {"grant_type": grant_type, "code": auth_code}
+        # logger.debug("test \n\n%s\n\n%s\n\n%s\n\nend test", encoded_creds, headers, data)
+        response = await self.request("POST", OAUTH_TOKEN_URL, data=data, headers=headers, base_url="")
+        return await EVEOAuthTokenResponse.from_esi_response(response)
+
+    async def get_access_token(
+        self,
+        refresh_token: str,
+        client_id: str,
+        client_secret: str,
+        scopes: list[ESIScope | str] | None = None,
+    ) -> EVEOAuthTokenResponse:
+        data = {
+            "grant_type": "refresh_token",
+            # "refresh_token": urllib.parse.quote_plus(refresh_token),
+            "refresh_token": refresh_token,
+        }
+        if scopes:
+            scopes = [s.value if isinstance(s, ESIScope) else s for s in scopes]
+            data["scope"] = " ".join(scopes)
+
+        encoded_creds = base64.b64encode(bytes(f"{client_id}:{client_secret}", "utf-8")).decode("utf-8")
+        headers = {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Host": "login.eveonline.com",
+            "Authorization": f"Basic {encoded_creds}",
+        }
+        response = await self.request(
+            "POST",
+            OAUTH_TOKEN_URL,
+            data=data,
+            headers=headers,
+            base_url="",
+        )
+        return await EVEOAuthTokenResponse.from_esi_response(response)
+
+    async def get_oauth_verify(self, access_token: str) -> ESIResponse:
+        return await self.request("GET", OAUTH_VERIFY_URL, auth=f"Bearer {access_token}", base_url="")

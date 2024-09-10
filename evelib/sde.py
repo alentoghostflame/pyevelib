@@ -12,7 +12,7 @@ import aiohttp
 import yaml
 
 from . import constants, yaml_workaround
-from .eve_objects import EVEConstellation, EVERegion, EVESolarSystem, EVEType, EVEUniverseResolvedIDs
+from .objects import EVEConstellation, EVERegion, EVESolarSystem, EVEType, EVEUniverseResolvedIDs
 
 
 if TYPE_CHECKING:

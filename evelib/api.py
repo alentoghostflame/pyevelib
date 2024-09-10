@@ -1,9 +1,13 @@
+from __future__ import annotations
+
 from logging import getLogger
-from typing import Iterable
+from typing import Iterable, TYPE_CHECKING
 
 from . import errors
-from .enums import MarketOrderType
-from .eve_objects import (
+from . import esi
+from . import objects
+from .enums import MarketOrderType, ESIScope
+from .objects import (
     EVEType,
     EVEUniverseResolvedIDs,
     EVERegion,
@@ -14,6 +18,10 @@ from .eve_objects import (
 )
 from .sde import EVESDE
 from .esi import EVEESI
+
+if TYPE_CHECKING:
+    from .enums import OAuthGrantType
+    from .esi import EVEOAuthTokenResponse
 
 
 __all__ = ("EVEAPI",)
@@ -81,6 +89,36 @@ class EVEAPI:
         logger.debug("HTTP hit for Markets Region Orders %s %s %s", region_id, order_type.value, type_id)
         ret = EVEMarketsRegionOrders.from_esi_response(
             response, self, region_id=region_id, order_type=order_type, type_id=type_id
+        )
+        return ret
+
+    # --- Planetary Interaction
+
+    async def get_character_colonies(
+        self, character_id: int, access_token: esi.EVEAccessToken | str
+    ) -> list[objects.EVEPlanetaryColony]:
+        """Fetches a list of all Planetary Interaction colonies the given character has.
+
+        Does not include layout information such as pins and routes.
+
+        Requires ESI and auth.
+        """
+        response = await self.http.get_character_planets(character_id, access_token)
+        logger.debug("HTTP hit for Character PI Colonies %s.", character_id)
+        ret = objects.EVEPlanetaryColony.from_esi_response(response, self)
+        return ret
+
+    async def get_character_colony_layout(
+        self, character_id: int, planet_id: int, access_token: esi.EVEAccessToken | str
+    ) -> objects.EVEPlanetaryColonyLayout:
+        """Fetches the complete layout of a specific Planetary Interaction colony.
+
+        This includes pins, links, and routes.
+        """
+        response = await self.http.get_character_planet(character_id, planet_id, access_token)
+        logger.debug("HTTP hit for Character PI colony layout %s %s.", character_id, planet_id)
+        ret = objects.EVEPlanetaryColonyLayout.from_esi_response(
+            response, self, character_id=character_id, planet_id=planet_id
         )
         return ret
 
@@ -204,3 +242,21 @@ class EVEAPI:
             raise errors.SDENotLoaded("This function currently requires the SDE to be loaded before using.")
 
         return self.sde.get_all_types()
+
+    # --- OAuth stuff.
+
+    async def post_oauth_token(
+        self, *, auth_code: str, grant_type: OAuthGrantType | str, client_id: str, client_secret: str
+    ) -> EVEOAuthTokenResponse:
+        return await self.http.post_oauth_token(
+            auth_code=auth_code, grant_type=grant_type, client_id=client_id, client_secret=client_secret
+        )
+
+    async def get_access_token(
+        self,
+        refresh_token: str,
+        client_id: str,
+        client_secret: str,
+        scopes: list[ESIScope | str] | None = None,
+    ) -> EVEOAuthTokenResponse:
+        return await self.http.get_access_token(refresh_token, client_id, client_secret, scopes)

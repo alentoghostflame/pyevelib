@@ -1,5 +1,6 @@
 __all__ = (
     "HTTPGeneric",
+    "HTTPBadRequest",
     "HTTPUnauthorized",
     "HTTPForbidden",
     "HTTPNotFound",
@@ -11,6 +12,10 @@ __all__ = (
 class HTTPGeneric(Exception):
     """A generic HTTP-related exception to raise. Subclassed by all other HTTP exceptions."""
     pass
+
+
+class HTTPBadRequest(HTTPGeneric):
+    """Represents error 400 bad request."""
 
 
 class HTTPUnauthorized(HTTPGeneric):

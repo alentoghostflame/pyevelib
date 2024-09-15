@@ -36,24 +36,24 @@ class YamlWorkaroundLoad:
             # Commented out, ignore it.
             return
 
-        # logger.debug('Processing line "%s"', decoded_data.rstrip("\n"))
+        logger.debug('Processing line "%s"', decoded_data.rstrip("\n"))
 
         current_indent_level = get_list_indent(decoded_data) or get_indent_level(decoded_data)
 
-        # logger.debug(
-        #     "Data layer sum indent %s vs current line indent %s.",
-        #     self.sum_layer_indent,
-        #     current_indent_level,
-        # )
+        logger.debug(
+            "Data layer sum indent %s vs current line indent %s.",
+            self.sum_layer_indent,
+            current_indent_level,
+        )
 
         while current_indent_level < (temp := self.sum_layer_indent):
             popped_layer = self.pop_data_layer()
-            # logger.debug(
-            #     "Current indent %s vs top layer indent %s, popped a layer to reduce by %s.",
-            #     current_indent_level,
-            #     temp,
-            #     popped_layer.indent,
-            # )
+            logger.debug(
+                "Current indent %s vs top layer indent %s, popped a layer to reduce by %s.",
+                current_indent_level,
+                temp,
+                popped_layer.indent,
+            )
 
         if current_indent_level > temp:
             logger.warning(
@@ -70,19 +70,19 @@ class YamlWorkaroundLoad:
 
     def handle_list(self, decoded_data: str, current_indent_level: int) -> bool:
         if strip_indent(decoded_data).startswith("- "):
-            # logger.debug("List data detected.")
-            # logger.debug(f'Decoded data: "%s", given current indent: "%s"', decoded_data.rstrip("\n"), current_indent_level)
+            logger.debug("List data detected.")
+            logger.debug(f'Decoded data: "%s", given current indent: "%s"', decoded_data.rstrip("\n"), current_indent_level)
 
 
             if isinstance(self.top_layer.data, dict) and current_indent_level > get_indent_level(decoded_data):
-                # logger.debug("Detected list entry right after dict, popping data layer.")
+                logger.debug("Detected list entry right after dict, popping data layer.")
                 self.pop_data_layer()
 
             if not isinstance(self.top_layer.data, list):
                 raise ValueError(f"Expected list layer, got {type(self.top_layer.data)}")
 
             if get_dict_value(decoded_data):
-                # logger.debug("Detected dict in list data, creating dict layer and handling it.")
+                logger.debug("Detected dict in list data, creating dict layer and handling it.")
                 new_dict = {}
                 dict_indent = get_stripped_list_indent(decoded_data) - current_indent_level
                 # logger.error("%s %s %s", dict_indent, get_stripped_list_indent(decoded_data), current_indent_level)
@@ -100,13 +100,12 @@ class YamlWorkaroundLoad:
 
     def handle_dict(self, decoded_data: str, current_indent_level: int) -> bool:
         if dict_data := get_dict_value(decoded_data):
-            # logger.debug("Dict data detected.")
+            logger.debug("Dict data detected.")
             if not isinstance(self.top_layer.data, dict):
                 raise ValueError(f"Expected dict layer, got {type(self.top_layer.data)}")
 
-            if dict_data[1] == {}:
-                # raise NotImplementedError("Future dict not supported yet.")
-                # logger.debug("Future nesting detected.")
+            if dict_data[1] == {} and dict_data[2] is False:
+                logger.debug("Future nesting detected.")
                 with self.read_future_line() as (future_full_raw_data, future_raw_data, future_decoded_data):
                     future_indent_level = get_list_indent(future_decoded_data) or get_indent_level(
                         future_decoded_data
@@ -118,13 +117,13 @@ class YamlWorkaroundLoad:
                         )
 
                     if strip_indent(future_decoded_data).startswith("- "):
-                        # logger.debug("Future list detected, creating list layer.")
+                        logger.debug("Future list detected, creating list layer.")
                         new_list = []
                         list_indent = get_list_indent(future_decoded_data) - current_indent_level
                         self.top_layer.data[dict_data[0]] = new_list
                         self.add_data_layer(list_indent, new_list)
                     else:
-                        # logger.debug("Future dict detected, creating dict layer.")
+                        logger.debug("Future dict detected, creating dict layer.")
                         new_dict = {}
                         dict_indent = future_indent_level - current_indent_level
                         self.top_layer.data[dict_data[0]] = new_dict
@@ -162,15 +161,15 @@ class YamlWorkaroundLoad:
         try:
             while (line_data := self.file.readline()).strip() == b"" or line_data.startswith(b"#"):
                 # To skip all blank and commented lines.
-                # logger.debug("Skipped future blank line.")
+                logger.debug("Skipped future blank line.")
                 full_data += line_data
 
             full_data += line_data
-            # logger.debug("Yielding future of %s", full_data)
+            logger.debug("Yielding future of %s", full_data)
             yield full_data, line_data, line_data.decode()
 
         finally:
-            # logger.debug("Rewinding to present.")
+            logger.debug("Rewinding to present.")
             self.file.seek(-len(full_data), 1)
 
     def get_text_block(self, starting_string: str, current_indent: int) -> str:
@@ -180,7 +179,7 @@ class YamlWorkaroundLoad:
         # TODO: Re-add handling quotations and ignoring symbols.
         if starting_string[0] in ('"', "'"):
             stop_string = starting_string[0]
-            # logger.debug("Stop string (%s) detected.", stop_string)
+            logger.debug("Stop string (%s) detected.", stop_string)
             index = find_stop_string(starting_string[1:], stop_string)
             if index is None:
                 pass  # The stop string isn't in this, pass to the next lines.
@@ -201,7 +200,7 @@ class YamlWorkaroundLoad:
 
             if stop_string is None:
                 if get_indent_level(decoded_data) <= current_indent:
-                    # logger.debug("Indent level decrease below current indent, reversing read and leaving.")
+                    logger.debug("Indent level decrease below current indent, reversing read and leaving.")
                     self.file.seek(-len(raw_data), 1)
                     break
             else:
@@ -229,11 +228,11 @@ class YamlWorkaroundLoad:
             loader.file = file
             with loader.read_future_line() as (future_full_data, future_raw_data, future_decoded_data):
                 if future_decoded_data.strip().startswith("- "):
-                    # logger.debug("Starting with a list.")
+                    logger.debug("Starting with a list.")
                     ret = []
                     loader.data_layers = [NestedData(2, ret)]
                 else:
-                    # logger.debug("Starting with a dict.")
+                    logger.debug("Starting with a dict.")
                     ret = {}
                     loader.data_layers = [NestedData(0, ret)]
 
@@ -275,36 +274,50 @@ def find_stop_string(given_text: str, stop_string: str) -> int | None:
     return None
 
 
-def get_dict_value(given_line: str) -> tuple[int | str, int | str | dict] | None:
-    # TODO: List support?
+def get_dict_value(given_line: str) -> tuple[int | str, int | str | dict, bool] | None:
+    """Returns a tuple of (key, value, if_value_handled) if it's an acceptable dict. None if not."""
     given_line = strip_indent(given_line).strip()
     for index, char in enumerate(given_line):
         if char == ":":
             if len(given_line) == index + 1:
-                return handle_value(strip_list_indent(given_line[:index])), {}
+                return handle_value(strip_list_indent(given_line[:index])), {}, False
             elif given_line[index + 1] == " ":
                 return handle_value(strip_list_indent(given_line[:index])), handle_value(
                     given_line[index + 1 :]
-                )
+                ), True
 
     return None
 
 
-def handle_value(given: str) -> str | int | float | bool | list:
+def str_to_int_or_float(given: str) -> int | float | None:
+    """Returns None if an invalid string is given."""
     given = given.strip()
-    # isnumeric() will fail if there's a negative sign (-).
-    if (temp := given.replace(".", "").lstrip("-")).isnumeric():
-        if temp != given.replace("-", ""):
-            return float(given)
-        else:
-            return int(given)
-    # if given.isdecimal():
-    #     return int(given)
-    # elif given.isnumeric():
-    #     return float(given)
+    if given.lstrip("-").isnumeric():
+        # isnumeric() will fail if there's a negative sign (-).
+        # If there is no . or e+ and is numeric, it's an int.
+        logger.debug("returning int value %s.", int(given))
+        return int(given)
+    elif given.lstrip("-").replace(".", "").replace("e+", "").replace("E+", "").isnumeric():
+        # If it has a . or e+/E+ and is numeric, it's a float.
+        logger.debug("Returning float value %s.", float(given))
+        return float(given)
+    else:
+        return None
+
+
+
+def handle_value(given: str) -> str | int | float | bool | list | dict:
+    given = given.strip()
+    if given == "{}":
+        logger.debug("Returning empty inline dict value.")
+        return {}
+    elif (ret := str_to_int_or_float(given)) is not None:
+        return ret
     elif given in ("true",):
+        logger.debug("Returning true value.")
         return True
     elif given in ("false",):
+        logger.debug("Return false value.")
         return False
     elif given.startswith("[") and given.endswith("]"):
         split_given = given[1:-1].split(",")
@@ -313,12 +326,15 @@ def handle_value(given: str) -> str | int | float | bool | list:
             for val in split_given:
                 ret.append(handle_value(val))
 
+            logger.debug("Returning inline list value %s.", ret)
             return ret
 
         else:
+            logger.debug("Returning empty inline list value.")
             return []
 
     else:
+        logger.debug("Returning string value %s.", given)
         return given
 
 

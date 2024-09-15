@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, TypedDict, Iterable
 import aiohttp
 import yaml
 
-from . import constants, yaml_workaround
+from . import constants, yaml_workaround, objects
 from .objects import EVEConstellation, EVERegion, EVESolarSystem, EVEType, EVEUniverseResolvedIDs
 
 
@@ -35,6 +35,8 @@ if TYPE_CHECKING:
     class UniverseCache(TypedDict):
         constellation: dict[int, UniverseCacheConstellation]
         name: dict[str, int]
+        planet: dict[int, int]
+        """{planet: solarsystem}"""
         region: dict[int, UniverseCacheRegion]
         solarsystem: dict[int, UniverseCacheSolarsystem]
 
@@ -76,6 +78,7 @@ class EVESDE:
         self._space_loc_cache: UniverseCache = {
             "constellation": {},
             "name": {},
+            "planet": {},
             "region": {},
             "solarsystem": {},
         }
@@ -157,6 +160,26 @@ class EVESDE:
 
         return ret
 
+    def get_planet(self, planet_id: int) -> objects.EVEPlanet | None:
+        ret = self._space.get(planet_id)
+
+        if ret is None and (solarsystem_id := self._space_loc_cache["planet"].get(planet_id)) is not None:
+            solarsystem = self.get_solarsystem(solarsystem_id)
+            if solarsystem is None:
+                logger.warning(
+                    "Universe cache says planet %s's solarsystem is %s, but the system wasn't found?",
+                    planet_id,
+                    solarsystem_id,
+                )
+                return None
+            elif (planet := solarsystem._cached_planets.get(planet_id)) is None:
+                logger.warning(
+                    "Universe cache says planet %s's solarsystem is %s, but the system doesn't have the planet?"
+                )
+                return planet
+            else:
+                return planet
+
     def get_solarsystem(self, solarsystem_id: int) -> EVESolarSystem | None:
         ret = self._space.get(solarsystem_id)
 
@@ -182,6 +205,10 @@ class EVESDE:
     def resolve_type_id(self, name: str) -> int | None:
         return self._type_id_resolve_map.get(name.casefold(), None)
 
+    def resolve_name(self, object_id: int) -> str | None:
+        """Attempts to get a name for the given object id from invNames.yaml"""
+        return self._inv_names.get(object_id)
+
     # ---- Complex getters/setters.
 
     def resolve_universe_ids(self, names: Iterable[str]) -> EVEUniverseResolvedIDs:
@@ -201,7 +228,9 @@ class EVESDE:
                 elif isinstance(space, EVESolarSystem):
                     solarsystems[name] = space.id
                 else:
-                    raise TypeError(f"Hit unhandled space type {space} with ID {d} when resolving name {name}")
+                    raise TypeError(
+                        f"Hit unhandled space type {space} with ID {d} when resolving name {name}"
+                    )
 
         return EVEUniverseResolvedIDs.from_sde_data(
             inventory_types=inventory_types,
@@ -338,12 +367,13 @@ class EVESDE:
         self.unload_type_materials()
 
         logger.debug("Loading type materials.")
-        type_material_data: dict[int, dict[str, list[dict[str, int]]]] = yaml_workaround.load(type_materials_file)
+        type_material_data: dict[int, dict[str, list[dict[str, int]]]] = yaml_workaround.load(
+            type_materials_file
+        )
         for type_id, material_list in type_material_data.items():
             self._type_materials[type_id] = {}
             for mat_data in material_list["materials"]:
                 self._type_materials[type_id][mat_data["materialTypeID"]] = mat_data["quantity"]
-
 
     def unload(self):
         """Unloads the stored data in the SDE.
@@ -416,11 +446,20 @@ class EVESDE:
 
         sde_dir = pathlib.Path(f"{constants.FILE_CACHE_DIR}/{constants.SDE_FOLDER_NAME}")
         space_root = sde_dir / "universe"
-        full_data: UniverseCache = {"name": {}, "region": {}, "constellation": {}, "solarsystem": {}}
+        full_data: UniverseCache = {
+            "name": {},
+            "region": {},
+            "constellation": {},
+            "planet": {},
+            "solarsystem": {},
+        }
         # This should be abyssal, eve, void, and wormhole.
         for base in space_root.iterdir():
             # This should be the region folders in the above folders.
             for region in base.iterdir():
+                #
+                # --- Begin handling regions.
+                #
                 if region.is_dir():
                     region_data = yaml_workaround.load(region / "region.yaml")
 
@@ -434,10 +473,11 @@ class EVESDE:
 
                     region_constellation_ids = []
                     for constellation in region.iterdir():
+                        #
+                        # --- Begin handling constellations
+                        #
                         if constellation.is_dir():
-                            constellation_data = yaml_workaround.load(
-                                constellation / "constellation.yaml"
-                            )
+                            constellation_data = yaml_workaround.load(constellation / "constellation.yaml")
 
                             constellation_id = constellation_data["constellationID"]
                             region_constellation_ids.append(constellation_id)
@@ -451,10 +491,11 @@ class EVESDE:
 
                             constellation_solarsystem_ids = []
                             for solarsystem in constellation.iterdir():
+                                #
+                                # --- Begin handling solar systems
+                                #
                                 if solarsystem.is_dir():
-                                    solarsystem_data = yaml_workaround.load(
-                                        solarsystem / "solarsystem.yaml"
-                                    )
+                                    solarsystem_data = yaml_workaround.load(solarsystem / "solarsystem.yaml")
 
                                     solarsystem_id = solarsystem_data["solarSystemID"]
                                     constellation_solarsystem_ids.append(solarsystem_id)
@@ -465,6 +506,12 @@ class EVESDE:
                                             solarsystem_id,
                                         )
                                         solarsystem_name = solarsystem.name
+
+                                    if planet_data_list := solarsystem_data.get("planets"):
+                                        # Begin handling planets.
+                                        for planet_id, planet_data in planet_data_list.items():
+                                            # TODO: Think about adding planets to the name cache?
+                                            full_data["planet"][planet_id] = solarsystem_id
 
                                     full_data["solarsystem"][solarsystem_id] = {
                                         "constellation": constellation_id,
@@ -495,6 +542,8 @@ class EVESDE:
         with open(space_cache, "w") as file:
             logger.debug("Saving universe file location cache.")
             yaml.dump(full_data, file, Dumper)
+
+    # ---- SDE caching shenanigans end.
 
     # ---- SDE downloading shenanigans.
 

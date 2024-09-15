@@ -200,6 +200,23 @@ class EVEAPI:
             )
             return None
 
+    async def get_planet(self, planet_id: int) -> objects.EVEPlanet | None:
+        ret = self.sde.get_planet(planet_id)
+        if ret:
+            logger.debug("Cache hit for Planet ID %s", planet_id)
+            return ret
+        elif self._return_on_cache_miss and self.sde.loaded:
+            logger.debug("Cache miss for Planet ID %s, return on cache miss enabled.", planet_id)
+            return None
+
+        try:
+            response = await self.http.get_universe_planet_info(planet_id)
+            logger.debug("HTTP hit for get Planet ID %s.", planet_id)
+            ret = objects.EVEPlanet.from_esi_response(response, self)
+            return ret
+        except errors.HTTPGeneric as e:
+            logger.debug("HTTP for Planet ID %s resulted in a miss, error %s.", planet_id, type(e))
+
     async def get_solarsystem(self, solarsystem_id: int):
         ret = self.sde.get_solarsystem(solarsystem_id)
         if ret:

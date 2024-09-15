@@ -23,6 +23,7 @@ __all__ = (
     "EVEMarketsRegionHistory",
     "EVEMarketsRegionOrders",
     "EVEUniverseResolvedIDs",
+    "EVEPlanet",
     "EVEPlanetaryColony",
     "EVEPlanetaryColonyLink",
     "EVEPlanetaryColonyRoute",
@@ -170,7 +171,7 @@ class EVEMarketHistory:
         ret = cls()
 
         ret.average = data["average"]
-        ret.date = datetime.datetime.strptime(data["date"], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        ret.date = datetime.datetime.strptime(data["date"], "%Y-%m-%d").replace(tzinfo=datetime.UTC)
         ret.highest = data["highest"]
         ret.lowest = data["lowest"]
         ret.order_count = data["order_count"]
@@ -223,7 +224,9 @@ class EVEMarketOrder:
         ret._api = api
         ret.duration = data["duration"]
         ret.is_buy_order = data["is_buy_order"]
-        ret.issued = datetime.datetime.strptime(data["issued"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.UTC)
+        ret.issued = datetime.datetime.strptime(data["issued"], "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=datetime.UTC
+        )
         ret.location_id = data["location_id"]
         ret.min_volume = data["min_volume"]
         ret.order_id = data["order_id"]
@@ -654,11 +657,13 @@ class EVEConstellation(BaseEVEObject):
 
 
 class EVESolarSystem(BaseEVEObject):
+    _cached_planets: dict[int, EVEPlanet]
+    """{planet_id: EVEPlanet}, only populated if loaded from the SDE."""
     constellation_id: int
     id: int
     localized_name: LocalizedStr
     name: str
-    # region_id: int | None  # ESI does not supply region ID, it has to be fetched from constellation.
+    planet_ids: list[int]
     security: float
     """The security status displayed in game."""
     security_class: str | None
@@ -669,11 +674,21 @@ class EVESolarSystem(BaseEVEObject):
     true_security: float
     """The actual precise security status."""
 
-    # async def get_region(self) -> EVERegion | None:
-    #     pass
-
     async def get_constellation(self) -> EVEConstellation | None:
         return await self._api.get_constellation(self.constellation_id)
+
+    async def get_planets(self) -> dict[int, EVEPlanet]:
+        """Returns {planet_id: EVEPlanet}"""
+        if self.from_sde:
+            return self._cached_planets.copy()
+        else:
+            async with asyncio.TaskGroup() as tg:
+                planet_tasks = {}
+                for planet_id in self.planet_ids:
+                    planet_tasks[planet_id] = tg.create_task(self._api.get_planet(planet_id))
+
+            ret = {planet_id: task.result() for planet_id, task in planet_tasks.items()}
+            return ret
 
     def _set_security(self, true_security: float):
         if 0.0 < true_security < 0.05:
@@ -689,7 +704,7 @@ class EVESolarSystem(BaseEVEObject):
         ret.id = response.data["system_id"]
         ret.localized_name = {response.content_language: response.data["name"]}
         ret.name = response.data["name"]
-        # ret.region_id = None
+        ret.planet_ids = [p["planet_id"] for p in response.data["planets"]]
         ret._set_security(response.data["security_status"])
         ret.security_class = response.data.get("security_class")
         ret.star_id = response.data.get("star_id")
@@ -707,7 +722,14 @@ class EVESolarSystem(BaseEVEObject):
         ret.id = data["solarSystemID"]
         ret.localized_name = {enums.Language.en: name}
         ret.name = name
-        ret._set_security(data["security"])
+        ret.planet_ids = list(data["planets"].keys())
+        ret._cached_planets = {}
+        for planet_id in ret.planet_ids:
+            ret._cached_planets[planet_id] = EVEPlanet.from_sde_data(
+                data["planets"][planet_id], api, planet_id=planet_id, system_id=ret.id
+            )
+
+        ret._set_security(float(data["security"]))
         ret.security_class = data.get("securityClass")
         ret.star_id = data.get("star", {}).get("id")
         ret.stargate_ids = list(data.get("stargates", {}).keys())
@@ -717,5 +739,38 @@ class EVESolarSystem(BaseEVEObject):
             for station_id in planet_data.get("npcStations", {})
         ]
         ret.true_security = data["security"]
+
+        return ret
+
+
+class EVEPlanet(BaseEVEObject):
+    name: str
+    id: int
+    position: tuple[float, float, float]
+    """Position of the planet, as an (X, Y, Z) tuple."""
+    system_id: int
+    type_id: int
+
+    @classmethod
+    def from_esi_response(cls, response: ESIResponse, api: EVEAPI | None):
+        ret = cls._from_esi_response(response, api)
+
+        ret.name = response.data["name"]
+        ret.id = response.data["planet_id"]
+        pos = response.data["position"]
+        ret.position = (pos["x"], pos["y"], pos["z"])
+        ret.type_id = response.data["type_id"]
+
+        return ret
+
+    @classmethod
+    def from_sde_data(cls, data: dict, api: EVEAPI, *, planet_id: int, system_id: int):
+        ret = cls._from_sde_data(data, api)
+
+        ret.name = api.sde.resolve_name(planet_id)
+        ret.id = planet_id
+        ret.position = tuple(data["position"])
+        ret.system_id = system_id
+        ret.type_id = data["typeID"]
 
         return ret

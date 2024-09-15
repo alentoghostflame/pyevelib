@@ -583,7 +583,7 @@ class EVEESI:
         access_token: EVEAccessToken | str,
         *,
         datasource: DatasourceType = None,
-    ):
+    ) -> ESIResponse:
         if isinstance(access_token, EVEAccessToken):
             access_token = access_token.token
 
@@ -591,7 +591,7 @@ class EVEESI:
             "GET",
             f"/v3/characters/{character_id}/planets/{planet_id}",
             datasource=datasource,
-            auth=f"Bearer {access_token}"
+            auth=f"Bearer {access_token}",
         )
 
     # --- Status
@@ -607,7 +607,7 @@ class EVEESI:
         *,
         language: Language | None = None,
         datasource: Datasource | None = None,
-    ):
+    ) -> ESIResponse:
         params = {}
         if language:
             params["language"] = language.value
@@ -622,7 +622,7 @@ class EVEESI:
         *,
         language: Language | None = None,
         datasource: Datasource | None = None,
-    ):
+    ) -> ESIResponse:
         params = {}
         if language:
             params["language"] = language.value
@@ -631,13 +631,24 @@ class EVEESI:
             "POST", f"/v1/universe/ids/", json=names, params=params, datasource=datasource
         )
 
+    async def get_universe_planet_info(
+        self, planet_id: int, *, language: Language | None = None, datasource: Datasource | None = None
+    ) -> ESIResponse:
+        params = {}
+        if language:
+            params["language"] = language.value
+
+        return await self.request(
+            "GET", f"/v1/universe/planets/{planet_id}", params=params, datasource=datasource
+        )
+
     async def get_universe_region_info(
         self,
         region_id: int,
         *,
         language: Language | None = None,
         datasource: Datasource | None = None,
-    ):
+    ) -> ESIResponse:
         params = {}
         if language:
             params["language"] = language.value
@@ -652,7 +663,7 @@ class EVEESI:
         *,
         language: Language | None = None,
         datasource: Datasource | None = None,
-    ):
+    ) -> ESIResponse:
         params = {}
         if language:
             params["language"] = language.value
@@ -666,7 +677,7 @@ class EVEESI:
         *,
         language: Language | None = None,
         datasource: Datasource | None = None,
-    ):
+    ) -> ESIResponse:
         params = {}
         if language:
             params["language"] = language.value

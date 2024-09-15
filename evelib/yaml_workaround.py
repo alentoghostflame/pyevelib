@@ -292,8 +292,9 @@ def get_dict_value(given_line: str) -> tuple[int | str, int | str | dict] | None
 
 def handle_value(given: str) -> str | int | float | bool | list:
     given = given.strip()
-    if (temp := given.replace(".", "")).isnumeric():
-        if temp != given:
+    # isnumeric() will fail if there's a negative sign (-).
+    if (temp := given.replace(".", "").lstrip("-")).isnumeric():
+        if temp != given.replace("-", ""):
             return float(given)
         else:
             return int(given)

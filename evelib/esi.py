@@ -39,6 +39,7 @@ logger = getLogger(__name__)
 BASE_URL = "https://esi.evetech.net"
 OAUTH_TOKEN_URL = "https://login.eveonline.com/v2/oauth/token"
 OAUTH_VERIFY_URL = "https://login.eveonline.com/oauth/verify"
+OAUTH_AUTHORIZATION_SERVER_URL = "https://login.eveonline.com/.well-known/oauth-authorization-server"
 
 DatasourceType = Literal["tranquility"]
 
@@ -688,6 +689,11 @@ class EVEESI:
 
     # --- Misc, indirect ESI stuff.
 
+    async def get_oauth_authorization_server(self) -> ESIResponse:
+        return await self.request(
+            "GET", OAUTH_AUTHORIZATION_SERVER_URL, base_url=""
+        )
+
     async def post_oauth_token(
         self,
         *,
@@ -709,6 +715,33 @@ class EVEESI:
         # logger.debug("test \n\n%s\n\n%s\n\n%s\n\nend test", encoded_creds, headers, data)
         response = await self.request("POST", OAUTH_TOKEN_URL, data=data, headers=headers, base_url="")
         return await EVEOAuthTokenResponse.from_esi_response(response)
+
+    async def post_revoke_refresh_token(self, refresh_token: str, client_id: str, client_secret: str, *, oauth_auth_server: ESIResponse | None = None):
+        """Attempts to revoke the given refresh token. Returns nothing."""
+        if oauth_auth_server is None:
+            oauth_auth_server = await self.get_oauth_authorization_server()
+
+        revocation_endpoint = oauth_auth_server.data["revocation_endpoint"]
+
+        data = {
+            "token_type_hint": "refresh_token",
+            "token": refresh_token
+        }
+        encoded_creds = base64.b64encode(bytes(f"{client_id}:{client_secret}", "utf-8")).decode("utf-8")
+        headers = {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Authorization": f"Basic {encoded_creds}"
+        }
+        response = await self._session.request(
+            "POST",
+            revocation_endpoint,
+            data=data,
+            headers=headers,
+        )
+        if response.status != 200:
+            raise errors.HTTPGeneric(f"Expected 200 status, received {response.status} instead.")
+        return None
+
 
     async def get_access_token(
         self,

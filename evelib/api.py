@@ -269,6 +269,9 @@ class EVEAPI:
             auth_code=auth_code, grant_type=grant_type, client_id=client_id, client_secret=client_secret
         )
 
+    async def revoke_refresh_token(self, refresh_token: str, client_id: str, client_secret: str):
+        return await self.http.post_revoke_refresh_token(refresh_token, client_id, client_secret)
+
     async def get_access_token(
         self,
         refresh_token: str,

@@ -307,6 +307,9 @@ class EVEPlanetaryColony(BaseEVEObject):
     async def get_solarsystem(self) -> EVESolarSystem | None:
         return await self._api.get_solarsystem(self.solar_system_id)
 
+    async def get_planet(self) -> EVEPlanet | None:
+        return await self._api.get_planet(self.planet_id)
+
     @classmethod
     def from_esi_response(cls, response: ESIResponse, api: EVEAPI | None) -> list[EVEPlanetaryColony]:
         ret = []
@@ -491,6 +494,9 @@ class EVEPlanetaryColonyLayout(BaseEVEObject):
                 ret.append(pin)
 
         return ret
+
+    async def get_planet(self) -> EVEPlanet | None:
+        return await self._api.get_planet(self.planet_id)
 
     @classmethod
     def from_esi_response(

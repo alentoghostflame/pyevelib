@@ -303,6 +303,13 @@ class ErrorRateLimit:
 
 
 class EVEESI:
+    MAX_RETRIES = 3
+    """Max times to retry when an applicable error is hit on request."""
+    RETRY_START_DELAY = 5
+    """Initial delay in seconds before the first retry."""
+    RETRY_INCREMENT = 2.5
+    """Additional delay in seconds for each additional retry."""
+
     def __init__(
         self,
         *,
@@ -361,6 +368,7 @@ class EVEESI:
         auth: str | None = None,
         params: dict[str, str] = None,
         headers: dict[str, str] = None,
+        update_ratelimit: bool = True,
     ) -> ESIResponse:
         if data is not None and json is not None:
             raise ValueError("Only one of 'data', 'json' kwargs can be specified at once.")
@@ -389,62 +397,92 @@ class EVEESI:
                     )
                     headers["If-None-Match"] = cached_response.etag
 
-        # TODO: Think about auto-retries?
-        async with self._error_rate_limit:
-            logger.debug("Making request to %s %s.", method, route)
-            async with self._session.request(
-                method=method, url=base_url + route, data=data, json=json, params=params, headers=headers
-            ) as response:
-                await self._error_rate_limit.update(response)
+        # Try 0 isn't a retry. If the max retries is 3, the max total of tries should be 4.
+        for i in range(self.MAX_RETRIES + 1):
+            if i > 0:
+                logger.warning("Retrying request %s %s %s.", method, route, params)
 
-                ret = None  # TODO: This is a patch, remove this later.
+            should_retry = False
+            async with self._error_rate_limit:
+                logger.debug("Making request to %s %s.", method, route)
+                async with self._session.request(
+                    method=method, url=base_url + route, data=data, json=json, params=params, headers=headers
+                ) as response:
+                    if update_ratelimit:
+                        await self._error_rate_limit.update(response)
 
-                if response.status >= 400:
-                    match response.status:
-                        case 400:
-                            logger.warning("Error 400: Bad request for %s %s", method, route)
-                            raise errors.HTTPBadRequest(response, ret)
-                        case 401:
-                            logger.warning("Error 401: Authorization rejected for %s %s", method, route)
-                            raise errors.HTTPUnauthorized(response, ret)
-                        case 403:
-                            logger.warning("Error 403: Permission rejected for %s %s", method, route)
-                            raise errors.HTTPForbidden(response, ret)
-                        case 404:
-                            logger.warning("Error 404: Couldn't find resource %s %s", method, route)
-                            # TODO: Think about making 404 deny list?
-                            raise errors.HTTPNotFound(response, ret)
-                        case _:
-                            logger.warning(
-                                "Error %s: not a handled error for %s %s", response.status, method, route
-                            )
-                            raise errors.HTTPGeneric(response, ret)
-
-                if warning_header := response.headers.get("Warning"):
-                    if warning_header == 199:
-                        logger.info("Warning 199: There is a update available for %s %s", method, route)
-                    elif warning_header == 299:
-                        logger.warning("Warning 299: There is a deprecation warning for %s %s", method, route)
-                    else:
-                        logger.warning("Warning %s: Unknown warning for %s %s", warning_header, method, route)
-
-                if response.status == 304 and "If-None-Match" in headers:
-                    logger.debug(
-                        "Error 304: Not modified for %s %s with etag in headers. Returning cached response. ",
-                        method,
-                        route,
-                    )
-                    return self._cache.get(cache_key)
-                else:
-                    ret = await ESIResponse.from_http_response(response, page=params.get("page", None))
-
-                if warning_text := response.headers.get("warning"):
-                    if warning_text.startswith("199"):
-                        logger.info("Warning 199, route update to X: %s", warning_text.split("-")[1].strip())
-                    elif warning_text.startswith("299"):
-                        logger.warning(
-                            "Warning 299, route deprecation of X: %s", warning_text.split("-")[1].strip()
+                    ret = None  # TODO: This is a patch, remove this later.
+                    try:
+                        debug_json = await response.json()
+                    except Exception as e:
+                        debug_json = (
+                            f"Error reading JSON: TYPE {type(e)}, ERROR {e}, TEXT {await response.read()}"
                         )
+                        logger.debug("%s", debug_json)
+
+                    # logger.debug("%s", debug_json)
+
+                    if response.status >= 400:
+                        match response.status:
+                            case 400:
+                                logger.warning("Error 400: Bad request for %s %s", method, route)
+                                raise errors.HTTPBadRequest(response, ret)
+                            case 401:
+                                logger.warning("Error 401: Authorization rejected for %s %s", method, route)
+                                raise errors.HTTPUnauthorized(response, ret)
+                            case 403:
+                                logger.warning("Error 403: Permission rejected for %s %s", method, route)
+                                raise errors.HTTPForbidden(response, ret)
+                            case 404:
+                                logger.warning("Error 404: Couldn't find resource %s %s", method, route)
+                                raise errors.HTTPNotFound(response, ret)
+                            case 504:
+                                logger.warning(
+                                    "Error 504: Gateway timed out for %s %s. Retrying.", method, route
+                                )
+                                should_retry = True
+                            case _:
+                                logger.warning(
+                                    "Error %s: not a handled error for %s %s", response.status, method, route
+                                )
+                                raise errors.HTTPGeneric(response, ret)
+
+                    if warning_header := response.headers.get("Warning"):
+                        if warning_header == 199:
+                            logger.info("Warning 199: There is a update available for %s %s", method, route)
+                        elif warning_header == 299:
+                            logger.warning(
+                                "Warning 299: There is a deprecation warning for %s %s", method, route
+                            )
+                        else:
+                            logger.warning(
+                                "Warning %s: Unknown warning for %s %s", warning_header, method, route
+                            )
+
+                    if response.status == 304 and "If-None-Match" in headers:
+                        logger.debug(
+                            "Error 304: Not modified for %s %s with etag in headers. Returning cached response. ",
+                            method,
+                            route,
+                        )
+                        return self._cache.get(cache_key)
+                    else:
+                        ret = await ESIResponse.from_http_response(response, page=params.get("page", None))
+
+                    if warning_text := response.headers.get("warning"):
+                        if warning_text.startswith("199"):
+                            logger.info(
+                                "Warning 199, route update to X: %s", warning_text.split("-")[1].strip()
+                            )
+                        elif warning_text.startswith("299"):
+                            logger.warning(
+                                "Warning 299, route deprecation of X: %s", warning_text.split("-")[1].strip()
+                            )
+
+            if not should_retry:
+                break
+            else:
+                await asyncio.sleep(self.RETRY_START_DELAY + self.RETRY_INCREMENT * i)
 
         if self._use_internal_cache and ret.expires:
             self._cache[cache_key] = ret
@@ -474,8 +512,6 @@ class EVEESI:
             raise ValueError("Cannot autopage the request if the page param is specified.")
         else:
             params["page"] = 1
-
-        # TODO: Test this.
 
         logger.debug(
             'Making autopage request to ("%s", "%s") with max concurrent requests at %s.',
@@ -560,6 +596,35 @@ class EVEESI:
             params["page"] = page
             return await self.request(
                 "GET", f"/v1/markets/{region_id}/orders", datasource=datasource, params=params
+            )
+
+    async def get_markets_structure(
+        self,
+        structure_id: int,
+        access_token: EVEAccessToken | str,
+        *,
+        page: int = 1,
+        autopage: bool = True,
+        datasource: Datasource | None = None,
+    ) -> dict[int, ESIResponse] | ESIResponse:
+        if isinstance(access_token, EVEAccessToken):
+            access_token = access_token.token
+
+        if autopage:
+            return await self.autopage_request(
+                "GET",
+                f"/v1/markets/structures/{structure_id}/",
+                datasource=datasource,
+                auth=f"Bearer {access_token}",
+            )
+        else:
+            params = {"page": page}
+            return await self.request(
+                "GET",
+                f"/v1/markets/structures/{structure_id}/",
+                params=params,
+                datasource=datasource,
+                auth=f"Bearer {access_token}",
             )
 
     # --- Planetary Interaction
@@ -690,9 +755,7 @@ class EVEESI:
     # --- Misc, indirect ESI stuff.
 
     async def get_oauth_authorization_server(self) -> ESIResponse:
-        return await self.request(
-            "GET", OAUTH_AUTHORIZATION_SERVER_URL, base_url=""
-        )
+        return await self.request("GET", OAUTH_AUTHORIZATION_SERVER_URL, base_url="")
 
     async def post_oauth_token(
         self,
@@ -713,24 +776,35 @@ class EVEESI:
         }
         data = {"grant_type": grant_type, "code": auth_code}
         # logger.debug("test \n\n%s\n\n%s\n\n%s\n\nend test", encoded_creds, headers, data)
-        response = await self.request("POST", OAUTH_TOKEN_URL, data=data, headers=headers, base_url="")
+        response = await self.request(
+            "POST",
+            OAUTH_TOKEN_URL,
+            data=data,
+            headers=headers,
+            base_url="",
+            update_ratelimit=False,
+        )
         return await EVEOAuthTokenResponse.from_esi_response(response)
 
-    async def post_revoke_refresh_token(self, refresh_token: str, client_id: str, client_secret: str, *, oauth_auth_server: ESIResponse | None = None):
+    async def post_revoke_refresh_token(
+        self,
+        refresh_token: str,
+        client_id: str,
+        client_secret: str,
+        *,
+        oauth_auth_server: ESIResponse | None = None,
+    ):
         """Attempts to revoke the given refresh token. Returns nothing."""
         if oauth_auth_server is None:
             oauth_auth_server = await self.get_oauth_authorization_server()
 
         revocation_endpoint = oauth_auth_server.data["revocation_endpoint"]
 
-        data = {
-            "token_type_hint": "refresh_token",
-            "token": refresh_token
-        }
+        data = {"token_type_hint": "refresh_token", "token": refresh_token}
         encoded_creds = base64.b64encode(bytes(f"{client_id}:{client_secret}", "utf-8")).decode("utf-8")
         headers = {
             "Content-Type": "application/x-www-form-urlencoded",
-            "Authorization": f"Basic {encoded_creds}"
+            "Authorization": f"Basic {encoded_creds}",
         }
         response = await self._session.request(
             "POST",
@@ -741,7 +815,6 @@ class EVEESI:
         if response.status != 200:
             raise errors.HTTPGeneric(f"Expected 200 status, received {response.status} instead.")
         return None
-
 
     async def get_access_token(
         self,
@@ -771,6 +844,7 @@ class EVEESI:
             data=data,
             headers=headers,
             base_url="",
+            update_ratelimit=False,
         )
         return await EVEOAuthTokenResponse.from_esi_response(response)
 

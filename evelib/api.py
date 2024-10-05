@@ -67,7 +67,7 @@ class EVEAPI:
         region_id = region.id if isinstance(region, EVERegion) else region
         type_id = eve_type.id if isinstance(eve_type, EVEType) else eve_type
         response = await self.http.get_markets_region_history(region_id, type_id)
-        logger.debug("HTTP hit for Markets Region History %s %s", region_id, type_id)
+        logger.debug("HTTP hit for Markets Region History %s %s.", region_id, type_id)
         ret = EVEMarketsRegionHistory.from_esi_response(response, self, region_id=region_id, type_id=type_id)
 
         return ret
@@ -86,10 +86,22 @@ class EVEAPI:
         response = await self.http.get_markets_region_orders(
             region_id, order_type, type_id=type_id, page=page, autopage=autopage
         )
-        logger.debug("HTTP hit for Markets Region Orders %s %s %s", region_id, order_type.value, type_id)
+        logger.debug("HTTP hit for Markets Region Orders %s %s %s.", region_id, order_type.value, type_id)
         ret = EVEMarketsRegionOrders.from_esi_response(
             response, self, region_id=region_id, order_type=order_type, type_id=type_id
         )
+        return ret
+
+    async def get_markets_structure(
+            self,
+            structure_id: int,
+            access_token: esi.EVEAccessToken | str,
+            autopage: bool = True,
+            page: int = 1,
+    ):
+        response = await self.http.get_markets_structure(structure_id, access_token, autopage=autopage, page=page)
+        logger.debug("HTTP hit for Markets Structure %s.", structure_id)
+        ret = objects.EVEMarketsStructureOrders.from_esi_response(response, self, structure_id=structure_id)
         return ret
 
     # --- Planetary Interaction
@@ -250,7 +262,7 @@ class EVEAPI:
             ret = EVEType.from_esi_response(response, api=self)
             return ret
         except errors.HTTPGeneric as e:
-            logger.debug("HTTP for Type ID %s resulted in a miss, error %s.", type_id, type(e))
+            logger.debug("HTTP hit for Type ID %s resulted in a miss, error %s.", type_id, type(e))
             return None
 
     async def get_all_types(self) -> dict[int, EVEType]:
@@ -265,9 +277,11 @@ class EVEAPI:
     async def post_oauth_token(
         self, *, auth_code: str, grant_type: OAuthGrantType | str, client_id: str, client_secret: str
     ) -> EVEOAuthTokenResponse:
-        return await self.http.post_oauth_token(
+        token_response = await self.http.post_oauth_token(
             auth_code=auth_code, grant_type=grant_type, client_id=client_id, client_secret=client_secret
         )
+        logger.debug("HTTP hit for post oauth token %s %s.", grant_type, client_id)
+        return token_response
 
     async def revoke_refresh_token(self, refresh_token: str, client_id: str, client_secret: str):
         return await self.http.post_revoke_refresh_token(refresh_token, client_id, client_secret)
@@ -279,4 +293,6 @@ class EVEAPI:
         client_secret: str,
         scopes: list[ESIScope | str] | None = None,
     ) -> EVEOAuthTokenResponse:
-        return await self.http.get_access_token(refresh_token, client_id, client_secret, scopes)
+        token_response = await self.http.get_access_token(refresh_token, client_id, client_secret, scopes)
+        logger.debug("HTTP hit for get access token %s.", client_id)
+        return token_response

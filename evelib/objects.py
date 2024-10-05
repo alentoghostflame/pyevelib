@@ -22,9 +22,11 @@ __all__ = (
     "EVEMarketOrder",
     "EVEMarketsRegionHistory",
     "EVEMarketsRegionOrders",
+    "EVEMarketsStructureOrders",
     "EVEUniverseResolvedIDs",
     "EVEPlanet",
     "EVEPlanetaryColony",
+    "EVEPlanetaryExtractorDetails",
     "EVEPlanetaryColonyLink",
     "EVEPlanetaryColonyRoute",
     "EVEPlanetaryColonyPin",
@@ -212,7 +214,7 @@ class EVEMarketOrder:
     min_volume: int
     price: float
     range: str  # Appears to be an enum on ESI's side? Make it an enum here as well?
-    system_id: int
+    system_id: int | None
     type_id: int
     volume_remain: int
     volume_total: int
@@ -232,7 +234,7 @@ class EVEMarketOrder:
         ret.order_id = data["order_id"]
         ret.price = data["price"]
         ret.range = data["range"]
-        ret.system_id = data["system_id"]
+        ret.system_id = data.get("system_id")
         ret.type_id = data["type_id"]
         ret.volume_remain = data["volume_remain"]
         ret.volume_total = data["volume_total"]
@@ -277,6 +279,39 @@ class EVEMarketsRegionOrders(BaseEVEObject):
         ret.orders = []
         ret.region_id = region_id
         ret.type_id = type_id
+
+        for res in response.values():
+            for order_data in res.data:
+                ret.orders.append(EVEMarketOrder.from_esi_data(order_data, ret._api))
+
+        return ret
+
+
+class EVEMarketsStructureOrders(BaseEVEObject):
+    orders: list[EVEMarketOrder]
+    structure_id: int
+
+    # async def get_region(self):
+    #     return await self._api.get_region(self.region_id)
+
+    @classmethod
+    def from_esi_response(
+        cls,
+        response: dict[int, ESIResponse] | ESIResponse,
+        api: EVEAPI | None,
+        *,
+        structure_id: int,
+    ):
+        if isinstance(response, dict):
+            single_response = response[1]
+        else:
+            single_response = response
+            response = {1: response}
+
+        ret = cls._from_esi_response(single_response, api)
+
+        ret.orders = []
+        ret.structure_id = structure_id
 
         for res in response.values():
             for order_data in res.data:

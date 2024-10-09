@@ -157,7 +157,7 @@ class EVEAPI:
 
         return self.sde.get_space_names()
 
-    async def resolve_universe_ids(self, names: Iterable[str]) -> EVEUniverseResolvedIDs:
+    async def resolve_universe_ids(self, names: list[str]) -> EVEUniverseResolvedIDs:
         """This takes a list of names and resolves them to ID's."""
         if self.sde.loaded:
             logger.debug("SDE is loaded, using it for resolving universe IDs with names %s.", names)

@@ -4,8 +4,9 @@ import asyncio
 import datetime
 from typing import TYPE_CHECKING, Iterable, Literal
 
-from . import utils
+from . import constants
 from . import enums
+from . import utils
 from .enums import PlanetType
 
 if TYPE_CHECKING:
@@ -148,7 +149,7 @@ class EVEType(
         ret.mass = data.get("mass", None)
         ret.localized_name = {enums.Language(raw_lang): name for raw_lang, name in data["name"].items()}
         ret.name = ret.localized_name[enums.Language.en]
-        ret.packaged_volume = None
+        ret.packaged_volume = constants.SDE_PACKAGED_GROUP_VOLUME.get(ret.group_id, None)
         ret.portion_size = data.get("portionSize", None)
         ret.published = data["published"]
         ret.radius = data.get("radius", None)

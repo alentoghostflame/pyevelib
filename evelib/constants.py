@@ -41,3 +41,20 @@ OAUTH_RESPONSE_TEMPLATE = """
   </body>
 </html>
 """
+
+# The SDE does not include packaged ship sizes, and those are kinda important. I hate hardcoding, but...
+SDE_PACKAGED_GROUP_VOLUME = {
+    25: 2500,  # Frigate
+    26: 10000,  # Cruiser
+    27: 50000,  # Battleship
+    28: 20000,  # Hauler
+    30: 10000000,  # Titan
+    358: 10000,  # Heavy Assault Cruiser
+    419: 15000,  # Combat Battlecruiser
+    463: 3750,  # Mining Barge
+    540: 15000,  # Command Ship
+    1201: 15000,  # Attack Battlecruiser
+    4594: 1300000,  # Lancer Dreadnought
+    # 941: 20000,  # Industrial Command Ship
+}
+"""{group_id: packaged_volume_in_m3}"""

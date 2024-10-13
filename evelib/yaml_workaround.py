@@ -176,7 +176,6 @@ class YamlWorkaroundLoad:
         ret = starting_string
 
         stop_string: str | None = None
-        # TODO: Re-add handling quotations and ignoring symbols.
         if starting_string[0] in ('"', "'"):
             stop_string = starting_string[0]
             logger.debug("Stop string (%s) detected.", stop_string)
@@ -189,7 +188,8 @@ class YamlWorkaroundLoad:
                 )
             else:
                 # Found the stop string, we are done.
-                return starting_string.strip(stop_string)
+                # return starting_string.strip(stop_string)
+                return cleanup_string(starting_string, stop_string)
 
         while (raw_data := self.file.readline()) != b"":
             decoded_data = raw_data.decode()
@@ -272,6 +272,21 @@ def find_stop_string(given_text: str, stop_string: str) -> int | None:
         ret_index += len(segment)
         return ret_index
     return None
+
+
+def cleanup_string(given_text: str, stop_string: str | None = None) -> str:
+    # Clean up the outside if necessary.
+    if stop_string:
+        if given_text[0] == stop_string:
+            given_text = given_text[1:]
+        if given_text[-1] == stop_string:
+            given_text = given_text[:-1]
+
+    # Using two quotes or 2 double quotes in YAML (or at least the SDE's YAML) is similar to doing \\
+    given_text = given_text.replace("''", "'")
+    given_text = given_text.replace('""', '"')
+
+    return given_text
 
 
 def get_dict_value(given_line: str) -> tuple[int | str, int | str | dict, bool] | None:

@@ -43,7 +43,7 @@ class EVEAPI:
         """
         self._return_on_cache_miss = return_on_cache_miss
 
-        self.http = EVEESI()
+        self.esi = EVEESI()
         self.sde = EVESDE()
 
     # --- EVEAPI Object stuff.
@@ -56,8 +56,98 @@ class EVEAPI:
         self.sde.unload()
 
     async def close(self):
-        await self.http.close_session()
+        await self.esi.close_session()
         await self.sde.close_session()
+
+
+    # --- Industry
+
+    async def get_blueprints(self, *, filter_published: bool = True) -> dict[int, objects.EVEBlueprint]:
+        """Retrieves all blueprint objects.
+
+        Requires the SDE to be loaded.
+
+        Parameters
+        ----------
+        filter_published: bool
+            If only blueprints with a corresponding published blueprint type should be returned.
+
+        Returns
+        -------
+        dict:
+            A dictionary of the blueprint ID's and the corresponding EVEBlueprint object.
+        """
+        if not self.sde.loaded:
+            raise errors.SDENotLoaded("This function currently requires the SDE to be loaded before using.")
+
+
+        ret = self.sde.get_blueprints()
+        logger.debug("Cache hit for get_blueprints with filter_published %s.", filter_published)
+        if filter_published:
+            for bp_id, bp_obj in ret.copy().items():
+                bp_type = await self.get_type(bp_obj.type_id)
+                if not bp_type.published:
+                    ret.pop(bp_id)
+
+        return ret
+
+    async def get_blueprint(self, blueprint_id: int) -> objects.EVEBlueprint | None:
+        """Attempts to retrieve the blueprint with the given blueprint ID.
+
+        The type ID of the blueprint item/type may not correspond to the blueprint ID.
+
+        Requires the SDE to be loaded.
+
+        Parameters
+        ----------
+        blueprint_id: int
+            ID of the blueprint to retrieve data of.
+
+        Returns
+        -------
+        objects.EVEBlueprint | None:
+            An EVEBlueprint object if the ID is found, None if not.
+        """
+        if not self.sde.loaded:
+            raise errors.SDENotLoaded("This function currently requires the SDE to be loaded before using.")
+
+        ret = self.sde.get_blueprint(blueprint_id)
+        if ret:
+            logger.debug("Cache hit for blueprint ID %s.", blueprint_id)
+        else:
+            logger.debug("Cache miss for blueprint ID %s.", blueprint_id)
+
+        return ret
+
+    async def get_blueprint_from_type(self, type_id: int) -> objects.EVEBlueprint | None:
+        """Attempts to retrieve the blueprint object that has the given type ID.
+
+        Most, if not all, blueprints have a corresponding type ID for that blueprint. This takes a type ID and
+        attempts to return the EVEBlueprint object that has that type ID.
+
+        This does not return the blueprint for a given product. IE, you put the ID of the Vargur Blueprint type in
+        here, not the ID of the Vargur type.
+
+        Parameters
+        ----------
+        type_id:
+            The ID of the given blueprint type.
+
+        Returns
+        -------
+        objects.EVEBlueprint | None:
+            An EVEBlueprint object if one shares the given type ID, None if not.
+        """
+        if not self.sde.loaded:
+            raise errors.SDENotLoaded("This function currently requires the SDE to be loaded before using.")
+
+        ret = self.sde.get_blueprint_from_type(type_id)
+        if ret:
+            logger.debug("Cache hit for blueprint type ID %s.", type_id)
+        else:
+            logger.debug("Cache miss for blueprint type ID %s.", type_id)
+
+        return ret
 
     # --- Market
 
@@ -66,7 +156,7 @@ class EVEAPI:
     ) -> EVEMarketsRegionHistory:
         region_id = region.id if isinstance(region, EVERegion) else region
         type_id = eve_type.id if isinstance(eve_type, EVEType) else eve_type
-        response = await self.http.get_markets_region_history(region_id, type_id)
+        response = await self.esi.get_markets_region_history(region_id, type_id)
         logger.debug("HTTP hit for Markets Region History %s %s.", region_id, type_id)
         ret = EVEMarketsRegionHistory.from_esi_response(response, self, region_id=region_id, type_id=type_id)
 
@@ -83,7 +173,7 @@ class EVEAPI:
     ) -> EVEMarketsRegionOrders:
         region_id = region.id if isinstance(region, EVERegion) else region
         type_id = eve_type.id if isinstance(eve_type, EVEType) else eve_type
-        response = await self.http.get_markets_region_orders(
+        response = await self.esi.get_markets_region_orders(
             region_id, order_type, type_id=type_id, page=page, autopage=autopage
         )
         logger.debug("HTTP hit for Markets Region Orders %s %s %s.", region_id, order_type.value, type_id)
@@ -99,7 +189,7 @@ class EVEAPI:
             autopage: bool = True,
             page: int = 1,
     ):
-        response = await self.http.get_markets_structure(structure_id, access_token, autopage=autopage, page=page)
+        response = await self.esi.get_markets_structure(structure_id, access_token, autopage=autopage, page=page)
         logger.debug("HTTP hit for Markets Structure %s.", structure_id)
         ret = objects.EVEMarketsStructureOrders.from_esi_response(response, self, structure_id=structure_id)
         return ret
@@ -115,7 +205,7 @@ class EVEAPI:
 
         Requires ESI and auth.
         """
-        response = await self.http.get_character_planets(character_id, access_token)
+        response = await self.esi.get_character_planets(character_id, access_token)
         logger.debug("HTTP hit for Character PI Colonies %s.", character_id)
         ret = objects.EVEPlanetaryColony.from_esi_response(response, self)
         return ret
@@ -127,7 +217,7 @@ class EVEAPI:
 
         This includes pins, links, and routes.
         """
-        response = await self.http.get_character_planet(character_id, planet_id, access_token)
+        response = await self.esi.get_character_planet(character_id, planet_id, access_token)
         logger.debug("HTTP hit for Character PI colony layout %s %s.", character_id, planet_id)
         ret = objects.EVEPlanetaryColonyLayout.from_esi_response(
             response, self, character_id=character_id, planet_id=planet_id
@@ -164,9 +254,38 @@ class EVEAPI:
             return self.sde.resolve_universe_ids(names)
 
         try:
-            response = await self.http.post_universe_ids_resolve(names=names)
+            response = await self.esi.post_universe_ids_resolve(names=names)
             logger.debug("HTTP hit for resolving Universe IDs with names %s.", names)
             ret = EVEUniverseResolvedIDs.from_esi_response(names, response, self)
+            return ret
+        except errors.HTTPGeneric as e:
+            logger.error("HTTP for resolving Universe IDs with names errored.", exc_info=e)
+            raise e
+
+    async def resolve_universe_names(self, ids: list[int], use_sde: bool = True) -> objects.EVEUniverseResolvedNames:
+        """Attempts to resolve the given list of names to sorted IDs.
+
+        Parameters
+        ----------
+        ids: list[int]
+            List of IDs to resolve names for.
+        use_sde: bool
+            If loaded, should the SDE be used. If loaded and True, no non-SDE data will be resolved.
+            That includes alliances, characters, corporations, and stations.
+
+        Returns
+        -------
+        EVEUniverseResolvedIDs:
+            An object containing the resolved categories, IDs, and names.
+        """
+        if self.sde.loaded and use_sde:
+            logger.debug("SDE is loaded and use_sde is True, using it to resolve Universe names with IDs %s.", ids)
+            return self.sde.resolve_universe_names(ids)
+
+        try:
+            response = await self.esi.post_universe_names_resolve(ids)
+            logger.debug("HTTP hit for resolving Universe names with IDs %s.", ids)
+            ret = objects.EVEUniverseResolvedNames.from_esi_response(response, self)
             return ret
         except errors.HTTPGeneric as e:
             logger.error("HTTP for resolving Universe IDs with names errored.", exc_info=e)
@@ -182,7 +301,7 @@ class EVEAPI:
             return None
 
         try:
-            response = await self.http.get_universe_region_info(region_id)
+            response = await self.esi.get_universe_region_info(region_id)
             logger.debug("HTTP hit for Region ID %s.", region_id)
             ret = EVERegion.from_esi_response(response, self)
             return ret
@@ -202,7 +321,7 @@ class EVEAPI:
             return None
 
         try:
-            response = await self.http.get_universe_constellation_info(constellation_id)
+            response = await self.esi.get_universe_constellation_info(constellation_id)
             logger.debug("HTTP hit for Constellation ID %s.", constellation_id)
             ret = EVEConstellation.from_esi_response(response, self)
             return ret
@@ -222,7 +341,7 @@ class EVEAPI:
             return None
 
         try:
-            response = await self.http.get_universe_planet_info(planet_id)
+            response = await self.esi.get_universe_planet_info(planet_id)
             logger.debug("HTTP hit for get Planet ID %s.", planet_id)
             ret = objects.EVEPlanet.from_esi_response(response, self)
             return ret
@@ -239,7 +358,7 @@ class EVEAPI:
             return None
 
         try:
-            response = await self.http.get_universe_solarsystem_info(solarsystem_id)
+            response = await self.esi.get_universe_solarsystem_info(solarsystem_id)
             logger.debug("HTTP hit for Solar System ID %s.", solarsystem_id)
             ret = EVESolarSystem.from_esi_response(response, self)
             return ret
@@ -257,7 +376,7 @@ class EVEAPI:
             return None
 
         try:
-            response = await self.http.get_universe_type_info(type_id)
+            response = await self.esi.get_universe_type_info(type_id)
             logger.debug("HTTP hit for Type ID %s.", type_id)
             ret = EVEType.from_esi_response(response, api=self)
             return ret
@@ -277,14 +396,14 @@ class EVEAPI:
     async def post_oauth_token(
         self, *, auth_code: str, grant_type: OAuthGrantType | str, client_id: str, client_secret: str
     ) -> EVEOAuthTokenResponse:
-        token_response = await self.http.post_oauth_token(
+        token_response = await self.esi.post_oauth_token(
             auth_code=auth_code, grant_type=grant_type, client_id=client_id, client_secret=client_secret
         )
         logger.debug("HTTP hit for post oauth token %s %s.", grant_type, client_id)
         return token_response
 
     async def revoke_refresh_token(self, refresh_token: str, client_id: str, client_secret: str):
-        return await self.http.post_revoke_refresh_token(refresh_token, client_id, client_secret)
+        return await self.esi.post_revoke_refresh_token(refresh_token, client_id, client_secret)
 
     async def get_access_token(
         self,
@@ -293,6 +412,6 @@ class EVEAPI:
         client_secret: str,
         scopes: list[ESIScope | str] | None = None,
     ) -> EVEOAuthTokenResponse:
-        token_response = await self.http.get_access_token(refresh_token, client_id, client_secret, scopes)
+        token_response = await self.esi.get_access_token(refresh_token, client_id, client_secret, scopes)
         logger.debug("HTTP hit for get access token %s.", client_id)
         return token_response

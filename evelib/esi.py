@@ -697,6 +697,11 @@ class EVEESI:
             "POST", f"/v1/universe/ids/", json=names, params=params, datasource=datasource
         )
 
+    async def post_universe_names_resolve(self, ids: list[int], *, datasource: Datasource | None = None) -> ESIResponse:
+        return await self.request(
+            "POST", f"/v3/universe/names/", json=ids, datasource=datasource
+        )
+
     async def get_universe_planet_info(
         self, planet_id: int, *, language: Language | None = None, datasource: Datasource | None = None
     ) -> ESIResponse:

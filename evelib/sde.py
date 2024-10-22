@@ -63,13 +63,17 @@ SDE_ZIP_DOWNLOAD_URL = "https://eve-static-data-export.s3-eu-west-1.amazonaws.co
 
 class EVESDE:
     def __init__(self):
+        self._blueprints: dict[int, objects.EVEBlueprint] = {}
+        """Blueprint data. {blueprint_id: EVEBlueprint}"""
+        self._blueprint_id_lookup: dict[int, int] = {}
+        """For looking up a type ID to see if it's a blueprint. {type_id: blueprint_id}"""
         self._types: dict[int, EVEType] = {}
         self._type_name_map: dict[str, int] = {}
         """For getting all type names or comparing case-sensitive strings to type names."""
         self._type_id_resolve_map: dict[str, int] = {}
         """For comparing case-folded strings to type names."""
         self._type_materials: dict[int, dict[int, int]] = {}
-        """Material data, {Item ID: {material ID: quantity, }}"""
+        """Type material data, used for reprocessing? {Item ID: {material ID: quantity, }}"""
 
         self._space: dict[int, EVERegion | EVEConstellation | EVESolarSystem] = {}
         """Due to ESI lumping types, systems, regions, planets, factions, etc. into "Universe", the bits that 
@@ -121,6 +125,21 @@ class EVESDE:
     def get_type_materials(self, type_id: int) -> dict[EVEType, int] | None:
         if raw_materials := self._type_materials.get(type_id):
             return {self.get_type(mat_id): quantity for mat_id, quantity in raw_materials.items()}
+        else:
+            return None
+
+    def get_blueprints(self) -> dict[int, objects.EVEBlueprint]:
+        """Returns a dictionary of all blueprints, with the blueprint ID as the key and EVEBlueprint as the value."""
+        return self._blueprints.copy()
+
+    def get_blueprint(self, blueprint_id: int) -> objects.EVEBlueprint | None:
+        """Gets a blueprint with the given blueprint_id"""
+        return self._blueprints.get(blueprint_id)
+
+    def get_blueprint_from_type(self, type_id: int) -> objects.EVEBlueprint | None:
+        """If the type given is a blueprint, it returns the data for it."""
+        if bp_id := self._blueprint_id_lookup.get(type_id):
+            return self._blueprints[bp_id]
         else:
             return None
 
@@ -240,6 +259,29 @@ class EVESDE:
             api=self._api,
         )
 
+    def resolve_universe_names(self, ids: Iterable[int]):
+        constellations = {}
+        inventory_types = {}
+        regions = {}
+        solarsystems = {}
+        for resolved_id in ids:
+            if t := self.get_constellation(resolved_id):
+                constellations[resolved_id] = self.resolve_name(resolved_id) or t.name
+            if t := self.get_type(resolved_id):
+                inventory_types[resolved_id] = self.resolve_name(resolved_id) or t.name
+            if t := self.get_region(resolved_id):
+                regions[resolved_id] = self.resolve_name(resolved_id) or t.name
+            if t := self.get_solarsystem(resolved_id):
+                solarsystems[resolved_id] = self.resolve_name(resolved_id) or t.name
+
+        return objects.EVEUniverseResolvedNames.from_sde_data(
+            constellations=constellations,
+            inventory_types=inventory_types,
+            regions=regions,
+            solar_systems=solarsystems,
+            api=self._api,
+        )
+
     # ---- SDE (un)loading shenanigans.
 
     def load(self, api: EVEAPI | None = None, clobber_existing_data: bool = False):
@@ -249,6 +291,7 @@ class EVESDE:
             raise FileNotFoundError(f'Attempted to load SDE from "{sde_dir}" but it does not exist.')
 
         logger.info("Loading SDE.")
+        self._load_sde_blueprints(clobber_existing_data=clobber_existing_data)
         self._load_inv_names(clobber_existing_data=clobber_existing_data)
         self._load_sde_types(clobber_existing_data=clobber_existing_data)
         self._load_sde_space_loc_cache(clobber_existing_data=clobber_existing_data)
@@ -375,6 +418,31 @@ class EVESDE:
             for mat_data in material_list["materials"]:
                 self._type_materials[type_id][mat_data["materialTypeID"]] = mat_data["quantity"]
 
+    def _load_sde_blueprints(self, *, clobber_existing_data: bool = False):
+        if not clobber_existing_data and self._blueprints:
+            logger.debug("blueprints is populated and clobber_data is false, returning.")
+            return
+
+        sde_dir = pathlib.Path(f"{constants.FILE_CACHE_DIR}/{constants.SDE_FOLDER_NAME}")
+        blueprints_file = sde_dir / "fsd" / "blueprints.yaml"
+        if not blueprints_file.exists():
+            raise FileNotFoundError(f'Blueprints file at "{blueprints_file}" does not exist.')
+
+        self.unload_blueprints()
+
+        logger.debug("Loading blueprints.")
+        blueprint_data: dict[int, dict] = yaml_workaround.load(blueprints_file)
+        for bp_id, bp_data in blueprint_data.items():
+            bp_obj = objects.EVEBlueprint.from_sde_data(bp_data, self._api, blueprint_id=bp_id)
+            self._blueprints[bp_id] = bp_obj
+            if bp_obj.type_id in self._blueprint_id_lookup:
+                raise ValueError(
+                    f"Tried adding blueprint type ID {bp_obj.type_id} to id_lookup, but that type ID was already set "
+                    f"to {self._blueprint_id_lookup[bp_obj.type_id]}"
+                )
+
+            self._blueprint_id_lookup[bp_obj.type_id] = bp_id
+
     def unload(self):
         """Unloads the stored data in the SDE.
 
@@ -382,6 +450,7 @@ class EVESDE:
         This does not need to be run before the program ends.
         """
         logger.info("Unloading SDE.")
+        self.unload_blueprints()
         self.unload_type_names()
         self.unload_types()
         self.unload_universe_names()
@@ -390,6 +459,11 @@ class EVESDE:
         self.unload_inv_names()
         self.unload_type_materials()
         self._loaded = False
+
+    def unload_blueprints(self):
+        logger.debug("Unloading blueprints.")
+        self._blueprints.clear()
+        self._blueprint_id_lookup.clear()
 
     def unload_types(self):
         logger.debug("Unloading types.")

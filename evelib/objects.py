@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+from logging import getLogger
 from typing import TYPE_CHECKING, Iterable, Literal
 
 from . import constants
@@ -18,6 +19,8 @@ __all__ = (
     "BaseEVEObject",
     "DogmaAttribute",
     "LocalizedStr",
+    "EVEBlueprint",
+    "EVEBlueprintActivity",
     "EVEConstellation",
     "EVEMarketHistory",
     "EVEMarketOrder",
@@ -25,6 +28,7 @@ __all__ = (
     "EVEMarketsRegionOrders",
     "EVEMarketsStructureOrders",
     "EVEUniverseResolvedIDs",
+    "EVEUniverseResolvedNames",
     "EVEPlanet",
     "EVEPlanetaryColony",
     "EVEPlanetaryExtractorDetails",
@@ -37,7 +41,7 @@ __all__ = (
     "EVEType",
 )
 
-
+logger = getLogger(__name__)
 LocalizedStr = dict[enums.Language, str]
 
 
@@ -109,6 +113,10 @@ class EVEType(
     radius: float | None
     volume: float | None
 
+    async def get_blueprint(self) -> EVEBlueprint | None:
+        """Returns an EVEBlueprint if this type is a blueprint, None otherwise."""
+        return await self._api.get_blueprint_from_type(self.id)
+
     @classmethod
     def from_esi_response(cls, response: ESIResponse, api: EVEAPI | None):
         ret = cls._from_esi_response(response, api)
@@ -154,6 +162,73 @@ class EVEType(
         ret.published = data["published"]
         ret.radius = data.get("radius", None)
         ret.volume = data.get("volume", None)
+
+        return ret
+
+
+class EVEBlueprintActivity:
+    materials: dict[int, int]
+    """Materials required for the activity. {type_id: quantity}"""
+    products: dict[int, int]
+    """Products of the activity. {type_id: quantity}"""
+    skills: dict[int, int]
+    """Skills required for the activity. {skill_id: level}"""
+    time: int
+    """Base time in seconds for the activity to finish."""
+
+    @classmethod
+    def from_sde_data(cls, data: dict):
+        ret = cls()
+
+        ret.materials = {}
+        if mat_data := data.get("materials"):
+            for inner_dat in mat_data:
+                ret.materials[inner_dat["typeID"]] = inner_dat["quantity"]
+
+        ret.products = {}
+        if prod_data := data.get("products"):
+            for inner_dat in prod_data:
+                ret.products[inner_dat["typeID"]] = inner_dat["quantity"]
+
+        ret.skills = {}
+        if skill_data := data.get("skills"):
+            for inner_dat in skill_data:
+                ret.skills[inner_dat["typeID"]] = inner_dat["level"]
+
+        ret.time = data["time"]
+
+        return ret
+
+
+class EVEBlueprint(BaseEVEObject):
+    id: int
+    """ID of this Blueprint"""
+
+    """Type ID of the blueprint."""
+    # copying: EVEBlueprintActivity  # TODO: Add this.
+    manufacturing: EVEBlueprintActivity | None
+    max_production_limit: int  # Rename to max_run_limit or something maybe?
+    """Maximum amount of runs allowed at once."""
+    # research_material: EVEBlueprintActivity  # TODO: Add this.
+    # """Material-reduction research."""
+    # research_time: EVEBlueprintActivity  # TODO: Add this.
+    # """Time-reduction research."""
+    type_id: int
+
+    # ESI does not currently host blueprint information it seems.
+
+    @classmethod
+    def from_sde_data(cls, data: dict, api: EVEAPI | None, *, blueprint_id: int):
+        ret = cls._from_sde_data(data, api)
+        ret.id = blueprint_id
+        manufacturing_data = data["activities"].get("manufacturing")
+        if manufacturing_data:
+            ret.manufacturing = EVEBlueprintActivity.from_sde_data(data["activities"]["manufacturing"])
+        else:
+            ret.manufacturing = None
+
+        ret.max_production_limit = data["maxProductionLimit"]
+        ret.type_id = data["blueprintTypeID"]
 
         return ret
 
@@ -607,6 +682,88 @@ class EVEUniverseResolvedIDs(BaseEVEObject):
         ret.inventory_types = inventory_types
         ret.regions = regions
         ret.systems = systems
+
+        return ret
+
+
+class EVEUniverseResolvedNames(BaseEVEObject):
+    alliances: dict[int, str]
+    characters: dict[int, str]
+    constellations: dict[int, str]
+    corporations: dict[int, str]
+    factions: dict[int, str]
+    inventory_types: dict[int, str]
+    """Types/Items."""
+    regions: dict[int, str]
+    solar_systems: dict[int, str]
+    stations: dict[int, str]
+
+    @classmethod
+    def from_esi_response(cls, response: ESIResponse, api: EVEAPI | None):
+        ret = cls._from_esi_response(response, api)
+        ret.alliances = {}
+        ret.characters = {}
+        ret.constellations = {}
+        ret.corporations = {}
+        ret.factions = {}
+        ret.inventory_types = {}
+        ret.regions = {}
+        ret.solar_systems = {}
+        ret.stations = {}
+        for resolved_dict in response.data:
+            category = resolved_dict["category"]
+            resolved_id = resolved_dict["id"]
+            name = resolved_dict["name"]
+            match category:
+                case "alliance":
+                    ret.alliances[resolved_id] = name
+                case "character":
+                    ret.characters[resolved_id] = name
+                case "constellation":
+                    ret.constellations[resolved_id] = name
+                case "corporation":
+                    ret.corporations[resolved_id] = name
+                case "faction":
+                    ret.factions[resolved_id] = name
+                case "inventory_type":
+                    ret.inventory_types[resolved_id] = name
+                case "region":
+                    ret.regions[resolved_id] = name
+                case "solar_system":
+                    ret.solar_systems[resolved_id] = name
+                case "station":
+                    ret.stations[resolved_id] = name
+                case _:
+                    logger.warning(
+                        'Missing match-case for ID %s with name "%s" and category "%s"',
+                        resolved_id,
+                        name,
+                        category,
+                    )
+
+        return ret
+
+    @classmethod
+    def from_sde_data(
+        cls,
+        *,
+        constellations: dict[int, str],
+        inventory_types: dict[int, str],
+        regions: dict[int, str],
+        solar_systems: dict[int, str],
+        api: EVEAPI | None,
+    ):
+        ret = cls._from_sde_data({}, api)
+
+        ret.alliances = {}
+        ret.characters = {}
+        ret.constellations = constellations.copy()
+        ret.corporations = {}
+        ret.factions = {}
+        ret.inventory_types = inventory_types.copy()
+        ret.regions = regions.copy()
+        ret.solar_systems = solar_systems.copy()
+        ret.stations = {}
 
         return ret
 

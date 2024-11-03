@@ -69,9 +69,9 @@ class EVESDE:
         """For looking up a type ID to see if it's a blueprint. {type_id: blueprint_id}"""
         self._types: dict[int, EVEType] = {}
         self._type_name_map: dict[str, int] = {}
-        """For getting all type names or comparing case-sensitive strings to type names."""
+        """For getting all published type names or comparing case-sensitive strings to type names. """
         self._type_id_resolve_map: dict[str, int] = {}
-        """For comparing case-folded strings to type names."""
+        """For comparing case-folded strings to type names. This does not include non-published items."""
         self._type_materials: dict[int, dict[int, int]] = {}
         """Type material data, used for reprocessing? {Item ID: {material ID: quantity, }}"""
 
@@ -107,11 +107,12 @@ class EVESDE:
 
     def add_type(self, eve_type: EVEType):
         self._types[eve_type.id] = eve_type
-        self._type_name_map[eve_type.name] = eve_type.id
-        self._type_id_resolve_map[eve_type.name.casefold()] = eve_type.id
-        for local, name in eve_type.localized_name.items():
-            self._type_name_map[name] = eve_type.id
-            self._type_id_resolve_map[name.casefold()] = eve_type.id
+        if eve_type.published:
+            self._type_id_resolve_map[eve_type.name.casefold()] = eve_type.id
+            self._type_name_map[eve_type.name] = eve_type.id
+            for local, name in eve_type.localized_name.items():
+                self._type_name_map[name] = eve_type.id
+                self._type_id_resolve_map[name.casefold()] = eve_type.id
 
     def get_type(self, type_id: int) -> EVEType | None:
         return self._types.get(type_id)

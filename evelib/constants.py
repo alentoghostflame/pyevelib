@@ -58,6 +58,5 @@ SDE_PACKAGED_GROUP_VOLUME = {
     941: 50000,  # Industrial Command Ship
     1201: 15000,  # Attack Battlecruiser
     4594: 1300000,  # Lancer Dreadnought
-    # 941: 20000,  # Industrial Command Ship
 }
 """{group_id: packaged_volume_in_m3, ...}"""

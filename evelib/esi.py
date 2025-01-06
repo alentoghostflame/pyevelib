@@ -44,13 +44,77 @@ OAUTH_AUTHORIZATION_SERVER_URL = "https://login.eveonline.com/.well-known/oauth-
 DatasourceType = Literal["tranquility"]
 
 
+# noinspection SqlNoDataSourceInspection
+async def response_to_aioresponse(
+    response: aiohttp.ClientResponse,
+    req_data: dict | list | str | None,
+    req_json: dict | list | None,
+    req_params: dict[str, str] | None,
+    req_headers: dict[str, str] | None,
+):
+    """Prints in console the aioresponses code to simulate that response. Used to create tests."""
+
+    def trim_headers(h: dict) -> dict:
+        # If any of these headers are used by EVEESI, they must be removed for tests to be valid.
+        r = h.copy()
+        r.pop("Access-Control-Allow-Credentials")
+        r.pop("Access-Control-Allow-Headers")
+        r.pop("Access-Control-Allow-Methods")
+        r.pop("Access-Control-Allow-Origin")
+        r.pop("Access-Control-Expose-Headers")
+        r.pop("Access-Control-Max-Age")
+        r.pop("Allow")
+        r.pop("Cache-Control")
+        r.pop("Strict-Transport-Security")
+        r.pop("Content-Encoding")
+        r.pop("Content-Length")
+        r["PyEVELib-Test-Header"] = "True"
+        return r
+
+    if response.headers.get("PyEVELib-Test-Header", False):
+        # Ignore headers already processed by this, we're testing right now.
+        return
+
+    ret: list[str] = [
+        "with aioresponses() as m:",
+    ]
+
+    if req_headers and "If-None-Match" in req_headers and response.status == 304:
+        # This is an etagged request.
+        ret.extend(
+            [
+                f"    m.{response.method.lower()}(",
+                f'        "{str(response.real_url)}",',
+                f"        status=304"
+                f"        headers=update_esi_headers({str(dict(trim_headers(response.headers)))}),",
+                f"    )",
+            ]
+        )
+    else:
+        ret.extend(
+            [
+                f"    m.{response.method.lower()}(",
+                f'        "{str(response.real_url)}",',
+                f"        payload={json.dumps(await response.json())},",
+                f"        headers=update_esi_headers({str(dict(trim_headers(response.headers)))}),",
+                f"    )",
+            ]
+        )
+
+    print("#" * 30 + f"\n\n{'\n'.join(ret)}\n\n" + "#" * 30)
+
+    # return "\n".join(ret)
+
+
 class ESIResponse:
-    headers: dict
-    """Headers of the HTTP Response."""
     content_language: Language | None
     """Language of the provided content."""
     etag: str | None
     """ETag of the request."""
+    headers: dict
+    """Headers of the HTTP Response."""
+    id: str
+    """ID of the ESI request."""
 
     def __init__(self):
         self.data: dict | None = None
@@ -70,8 +134,11 @@ class ESIResponse:
 
         ret.data = await response.json()
         ret.headers = response.headers
+
         ret.content_language = Language(lang) if (lang := ret.headers.get("content-language")) else None
         ret.etag = ret.headers.get("etag")
+        ret.id = response.headers["x-esi-request-id"]
+
         ret.request = utils.eve_timestamp_to_datetime(response.headers["date"])
 
         if "expires" in response.headers:
@@ -327,6 +394,9 @@ class EVEESI:
         if self._session and not self._session.closed:
             await self._session.close()
 
+        if self._error_rate_limit.resetting:
+            self._error_rate_limit._reset_remaining_task.cancel()
+
     def _make_headers(
         self,
         original_headers: dict[str, str],
@@ -458,6 +528,10 @@ class EVEESI:
                             logger.warning(
                                 "Warning %s: Unknown warning for %s %s", warning_header, method, route
                             )
+
+                    # await response_to_aioresponse(
+                    #     response, req_data=data, req_json=json, req_params=params, req_headers=headers
+                    # )
 
                     if response.status == 304 and "If-None-Match" in headers:
                         logger.debug(
@@ -667,6 +741,18 @@ class EVEESI:
 
     # --- Universe
 
+    async def get_universe_categories(self, *, datasource: Datasource | None = None) -> ESIResponse:
+        return await self.request("GET", "/v1/universe/categories/", datasource=datasource)
+
+    async def get_universe_category_info(self, category_id: int, *, language: Language | None = None, datasource: Datasource | None = None):
+        params = {}
+        if language:
+            params["language"] = language.value
+
+        return await self.request(
+            "GET", f"/v1/universe/categories/{category_id}", params=params, datasource=datasource
+        )
+
     async def get_universe_constellation_info(
         self,
         constellation_id: int,
@@ -680,6 +766,34 @@ class EVEESI:
 
         return await self.request(
             "GET", f"/v1/universe/constellations/{constellation_id}", params=params, datasource=datasource
+        )
+
+    async def get_universe_groups(
+        self,
+        *,
+        autopage: bool = True,
+        page: int = 1,
+        datasource: Datasource | None = None,
+    ) -> dict[int, ESIResponse] | ESIResponse:
+        if autopage:
+            return await self.autopage_request("GET", "/v1/universe/groups/", datasource=datasource)
+        else:
+            params = {"page": str(page)}
+            return await self.request("GET", "/v1/universe/groups/", params=params, datasource=datasource)
+
+    async def get_universe_group_info(
+        self,
+        group_id: int,
+        *,
+        language: Language | None = None,
+        datasource: Datasource | None = None,
+    ):
+        params = {}
+        if language:
+            params["language"] = language.value
+
+        return await self.request(
+            "GET", f"/v1/universe/groups/{group_id}", params=params, datasource=datasource
         )
 
     async def post_universe_ids_resolve(
@@ -697,10 +811,10 @@ class EVEESI:
             "POST", f"/v1/universe/ids/", json=names, params=params, datasource=datasource
         )
 
-    async def post_universe_names_resolve(self, ids: list[int], *, datasource: Datasource | None = None) -> ESIResponse:
-        return await self.request(
-            "POST", f"/v3/universe/names/", json=ids, datasource=datasource
-        )
+    async def post_universe_names_resolve(
+        self, ids: list[int], *, datasource: Datasource | None = None
+    ) -> ESIResponse:
+        return await self.request("POST", f"/v3/universe/names/", json=ids, datasource=datasource)
 
     async def get_universe_planet_info(
         self, planet_id: int, *, language: Language | None = None, datasource: Datasource | None = None

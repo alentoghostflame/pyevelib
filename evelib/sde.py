@@ -67,6 +67,10 @@ class EVESDE:
         """Blueprint data. {blueprint_id: EVEBlueprint}"""
         self._blueprint_id_lookup: dict[int, int] = {}
         """For looking up a type ID to see if it's a blueprint. {type_id: blueprint_id}"""
+        self._categories: dict[int, objects.EVECategory] = {}
+        """EVE Category data, from sde/fsd/categories"""
+        self._groups: dict[int, objects.EVEGroup] = {}
+        """EVE Group data, from sde/fsd/groups.yaml"""
         self._types: dict[int, EVEType] = {}
         self._type_name_map: dict[str, int] = {}
         """For getting all published type names or comparing case-sensitive strings to type names. """
@@ -122,6 +126,24 @@ class EVESDE:
 
     def get_all_types(self) -> dict[int, EVEType]:
         return self._types.copy()
+
+    def get_group_ids(self) -> list[int]:
+        return list(self._groups.keys())
+
+    def get_group(self, group_id: int) -> objects.EVEGroup | None:
+        return self._groups.get(group_id)
+
+    def get_all_groups(self) -> dict[int, objects.EVEGroup]:
+        return self._groups.copy()
+
+    def get_category_ids(self) -> list[int]:
+        return list(self._categories.keys())
+
+    def get_category(self, category_id: int) -> objects.EVECategory | None:
+        return self._categories.get(category_id)
+
+    def get_all_categories(self) -> dict[int, objects.EVECategory]:
+        return self._categories.copy()
 
     def get_type_materials(self, type_id: int) -> dict[EVEType, int] | None:
         if raw_materials := self._type_materials.get(type_id):
@@ -292,14 +314,28 @@ class EVESDE:
             raise FileNotFoundError(f'Attempted to load SDE from "{sde_dir}" but it does not exist.')
 
         logger.info("Loading SDE.")
-        self._load_sde_blueprints(clobber_existing_data=clobber_existing_data)
-        self._load_inv_names(clobber_existing_data=clobber_existing_data)
-        self._load_sde_types(clobber_existing_data=clobber_existing_data)
-        self._load_sde_space_loc_cache(clobber_existing_data=clobber_existing_data)
-        self._load_sde_type_materials(clobber_existing_data=clobber_existing_data)
+        self.load_sde_blueprints(clobber_existing_data=clobber_existing_data)
+        self.load_inv_names(clobber_existing_data=clobber_existing_data)
+        self.load_sde_types(clobber_existing_data=clobber_existing_data)
+        self.load_sde_groups(
+            clobber_existing_data=clobber_existing_data
+        )  # This should be run after types are loaded.
+        self.load_sde_categories(
+            clobber_existing_data=clobber_existing_data
+        )  # This should be run after groups are loaded.
+        self.load_sde_space_loc_cache(clobber_existing_data=clobber_existing_data)
+        self.load_sde_type_materials(clobber_existing_data=clobber_existing_data)
+        self.set_loaded()
+
+    def set_loaded(self):
+        """Manually set the SDE as loaded."""
         self._loaded = True
 
-    def _load_inv_names(self, *, clobber_existing_data: bool = False):
+    def unset_loaded(self):
+        """Manually set the SDE as unloaded."""
+        self._loaded = False
+
+    def load_inv_names(self, *, clobber_existing_data: bool = False):
         if not clobber_existing_data and self._inv_names:
             logger.debug("inv_names is populated and clobber_data is false, returning.")
             return
@@ -316,7 +352,7 @@ class EVESDE:
         for data in raw_data_list:
             self._inv_names[int(data["itemID"])] = data["itemName"]
 
-    def _load_sde_types(self, *, clobber_existing_data: bool = False):
+    def load_sde_types(self, *, clobber_existing_data: bool = False):
         if not clobber_existing_data and self._types:
             logger.debug("types is populated and clobber_data is false, returning.")
             return
@@ -335,7 +371,7 @@ class EVESDE:
         for type_id, type_data in type_ids_data.items():
             self.add_type(EVEType.from_sde_data(type_data, self._api, type_id=type_id))
 
-    def _load_sde_space_loc_cache(self, *, clobber_existing_data: bool = False):
+    def load_sde_space_loc_cache(self, *, clobber_existing_data: bool = False):
         if not clobber_existing_data and (
             self._space_loc_cache["constellation"]
             or self._space_loc_cache["name"]
@@ -398,7 +434,7 @@ class EVESDE:
         self._space[solarsystem.id] = solarsystem
         return solarsystem
 
-    def _load_sde_type_materials(self, *, clobber_existing_data: bool = False):
+    def load_sde_type_materials(self, *, clobber_existing_data: bool = False):
         if not clobber_existing_data and self._type_materials:
             logger.debug("type_materials is populated and clobber_data is false, returning.")
             return
@@ -419,7 +455,7 @@ class EVESDE:
             for mat_data in material_list["materials"]:
                 self._type_materials[type_id][mat_data["materialTypeID"]] = mat_data["quantity"]
 
-    def _load_sde_blueprints(self, *, clobber_existing_data: bool = False):
+    def load_sde_blueprints(self, *, clobber_existing_data: bool = False):
         if not clobber_existing_data and self._blueprints:
             logger.debug("blueprints is populated and clobber_data is false, returning.")
             return
@@ -444,6 +480,75 @@ class EVESDE:
 
             self._blueprint_id_lookup[bp_obj.type_id] = bp_id
 
+    def load_sde_groups(self, *, clobber_existing_data: bool = False):
+        """This needs to be run after load_sde_types for the group type_ids attribute to be populated."""
+        if not clobber_existing_data and self._groups:
+            logger.debug("groups are populated and clobber_existing_data is false, returning.")
+            return
+
+        sde_dir = pathlib.Path(f"{constants.FILE_CACHE_DIR}/{constants.SDE_FOLDER_NAME}")
+        groups_file = sde_dir / "fsd" / "groups.yaml"
+        if not groups_file.exists():
+            raise FileNotFoundError(f'Groups file at "{groups_file}" does not exist.')
+
+        self.unload_groups()
+
+        logger.debug("Loading groups.")
+        group_data = yaml_workaround.load(groups_file)
+
+        # After groups are loaded, get type_ids ready.
+        type_groups: dict[int, list[int]] = {}
+        """{group_id: [type_id, type_id, ...]}"""
+        if not self._types:
+            logger.warning("Types are not loaded yet, groups wont know what types they have.")
+        else:
+            for t in self._types.values():
+                if t.group_id:
+                    if t.group_id not in type_groups:
+                        type_groups[t.group_id] = []
+
+                    type_groups[t.group_id].append(t.id)
+
+        for g_id, g_data in group_data.items():
+            g_object = objects.EVEGroup.from_sde_data(
+                g_data, self._api, group_id=g_id, type_ids=tuple(type_groups.get(g_id, []))
+            )
+            self._groups[g_id] = g_object
+
+    def load_sde_categories(self, *, clobber_existing_data: bool = False):
+        """This needs to be run after load_sde_groups for the category group_ids to be populated."""
+        if not clobber_existing_data and self._categories:
+            logger.debug("categories are populated and clobber_existing_data is false, returning.")
+            return
+
+        sde_dir = pathlib.Path(f"{constants.FILE_CACHE_DIR}/{constants.SDE_FOLDER_NAME}")
+        categories_file = sde_dir / "fsd" / "categories.yaml"
+        if not categories_file.exists():
+            raise FileNotFoundError(f'Categories file at "{categories_file}" dose not exist.')
+
+        self.unload_categories()
+
+        logger.debug("Loading categories.")
+        category_data = yaml_workaround.load(categories_file)
+
+        # After categories are loaded, get group_ids ready.
+        group_categories: dict[int, list[int]] = {}
+        """{category_id: [group_id, group_id, ...]}"""
+        if not self._groups:
+            logger.warning("Groups are not loaded yet, categories wont know what groups they have.")
+        else:
+            for g in self._groups.values():
+                if g.category_id not in group_categories:
+                    group_categories[g.category_id] = []
+
+                group_categories[g.category_id].append(g.id)
+
+        for c_id, c_data in category_data.items():
+            c_object = objects.EVECategory.from_sde_data(
+                c_data, self._api, category_id=c_id, group_ids=tuple(group_categories.get(c_id, []))
+            )
+            self._categories[c_id] = c_object
+
     def unload(self):
         """Unloads the stored data in the SDE.
 
@@ -452,6 +557,8 @@ class EVESDE:
         """
         logger.info("Unloading SDE.")
         self.unload_blueprints()
+        self.unload_groups()
+        self.unload_categories()
         self.unload_type_names()
         self.unload_types()
         self.unload_universe_names()
@@ -459,12 +566,20 @@ class EVESDE:
         self.unload_space_loc_cache()
         self.unload_inv_names()
         self.unload_type_materials()
-        self._loaded = False
+        self.unset_loaded()
 
     def unload_blueprints(self):
         logger.debug("Unloading blueprints.")
         self._blueprints.clear()
         self._blueprint_id_lookup.clear()
+
+    def unload_groups(self):
+        logger.debug("Unloading groups.")
+        self._groups.clear()
+
+    def unload_categories(self):
+        logger.debug("Unloading categories.")
+        self._categories.clear()
 
     def unload_types(self):
         logger.debug("Unloading types.")
@@ -506,8 +621,7 @@ class EVESDE:
         logger.info("Deleting SDE caches.")
         cache = pathlib.Path(constants.FILE_CACHE_DIR)
         universe = cache / constants.SPACE_CACHE_FILENAME
-        if universe.exists():
-            universe.unlink()
+        universe.unlink(missing_ok=True)
 
     def _generate_space_cache(self, overwrite: bool = False):
         space_cache = pathlib.Path(f"{constants.FILE_CACHE_DIR}/{constants.SPACE_CACHE_FILENAME}")
@@ -517,7 +631,7 @@ class EVESDE:
 
         logger.debug("Generating space file location cache.")
         if not self._inv_names:
-            self._load_inv_names()
+            self.load_inv_names()
 
         sde_dir = pathlib.Path(f"{constants.FILE_CACHE_DIR}/{constants.SDE_FOLDER_NAME}")
         space_root = sde_dir / "universe"
@@ -626,6 +740,11 @@ class EVESDE:
     async def _make_session() -> aiohttp.ClientSession:
         return aiohttp.ClientSession(headers={"User-Agent": constants.USER_AGENT})
 
+    async def open_session(self):
+        if self._session is None or self._session.closed:
+            logger.debug("Opening session.")
+            self._session = await self._make_session()
+
     async def close_session(self):
         if self._session and not self._session.closed:
             logger.debug("Closing session.")
@@ -634,8 +753,7 @@ class EVESDE:
     async def update_sde(self, force=False, clear_cache_on_update: bool = True):
         logger.debug("Attempting to update SDE.")
 
-        if self._session is None or self._session.closed:
-            self._session = await self._make_session()
+        await self.open_session()
 
         cache_dir = pathlib.Path(constants.FILE_CACHE_DIR)
         # Creates cache the cache folder if needed.
@@ -643,7 +761,7 @@ class EVESDE:
 
         sde_dir = cache_dir / constants.SDE_FOLDER_NAME
         # This checks and downloads any SDE checksum updates, good to do even when force=True.
-        checksum_match = await self._sde_checksum_match(cache_dir)
+        checksum_match = await self._sde_checksum_match()
 
         if not sde_dir.exists():
             logger.debug('SDE folder does not exist at "%s".', sde_dir)
@@ -669,12 +787,13 @@ class EVESDE:
         else:
             logger.info("Skipping SDE update.")
 
-    async def _sde_checksum_match(self, file_cache: pathlib.Path) -> bool:
+    async def _sde_checksum_match(self) -> bool:
         logger.debug("Downloading remote SDE checksum")
+        await self.open_session()
         async with self._session.get(SDE_CHECKSUM_DOWNLOAD_URL) as response:
             remote_checksum_data = await response.read()
 
-        local_checksum = file_cache / constants.SDE_CHECKSUM_FILENAME
+        local_checksum = pathlib.Path(constants.FILE_CACHE_DIR) / constants.SDE_CHECKSUM_FILENAME
 
         if local_checksum.exists():
             logger.debug("Found local checksum, reading it.")

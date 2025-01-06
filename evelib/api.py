@@ -224,6 +224,15 @@ class EVEAPI:
         )
         return ret
 
+    # --- Status
+
+    async def get_server_status(self):
+        """Gets the current server status."""
+        response = await self.esi.get_status()
+        logger.debug("HTTP hit for server status.")
+        ret = objects.EVEStatus.from_esi_response(response, self)
+        return ret
+
     # --- Universe
 
     async def get_type_names(self) -> dict[str, int]:
@@ -390,6 +399,82 @@ class EVEAPI:
             raise errors.SDENotLoaded("This function currently requires the SDE to be loaded before using.")
 
         return self.sde.get_all_types()
+
+    async def get_group_ids(self) -> list[int] | None:
+        ret = self.sde.get_group_ids()
+        if ret:
+            logger.debug("Cache hit for group IDs.")
+            return ret
+        elif self._return_on_cache_miss and self.sde.loaded:
+            logger.debug("Cache miss for group IDs, return on cache miss enabled.")
+            return None
+
+        try:
+            response = await self.esi.get_universe_groups()
+            logger.debug("HTTP hit for group IDs.")
+            if isinstance(response, dict):
+                ret = []
+                for res in response.values():
+                    ret.extend(res.data)
+            else:
+                ret = response.data
+
+            return ret
+        except errors.HTTPGeneric as e:
+            logger.warning("HTTP hit for group IDs resulted in a miss, error %s.", type(e))
+            return None
+
+    async def get_group(self, group_id: int) -> objects.EVEGroup | None:
+        ret = self.sde.get_group(group_id)
+        if ret:
+            logger.debug("Cache hit for group ID %s.", group_id)
+            return ret
+        elif self._return_on_cache_miss and self.sde.loaded:
+            logger.debug("Cache miss for group ID %s, return on cache miss enabled.", group_id)
+            return None
+
+        try:
+            response = await self.esi.get_universe_group_info(group_id)
+            logger.debug("HTTP hit for group ID %s.", group_id)
+            ret = objects.EVEGroup.from_esi_response(response, self)
+            return ret
+        except errors.HTTPGeneric as e:
+            logger.debug("HTTP for group ID %s resulted in a miss, error %s.", group_id, type(e))
+
+    async def get_category_ids(self) -> list[int] | None:
+        ret = self.sde.get_category_ids()
+        if ret:
+            logger.debug("Cache hit for category IDs.")
+            return ret
+        elif self._return_on_cache_miss and self.sde.loaded:
+            logger.debug("Cache miss for group IDs, return on cache miss enabled.")
+            return None
+
+        try:
+            response = await self.esi.get_universe_categories()
+            logger.debug("HTTP hit for category IDs.")
+            return response.data
+        except errors.HTTPGeneric as e:
+            logger.warning("HTTP hit for category IDs resulted in a miss, error %s.", type(e))
+            return None
+
+    async def get_category(self, category_id: int) -> objects.EVECategory | None:
+        ret = self.sde.get_category(category_id)
+        if ret:
+            logger.debug("Cache hit for category ID %s.", category_id)
+            return ret
+        elif self._return_on_cache_miss and self.sde.loaded:
+            logger.debug("Cache miss for category ID %s, return on cache miss enabled.", category_id)
+            return None
+
+        try:
+            response = await self.esi.get_universe_category_info(category_id)
+            logger.debug("HTTP hit for category ID %s.", category_id)
+            ret = objects.EVECategory.from_esi_response(response, self)
+            return ret
+        except errors.HTTPGeneric as e:
+            logger.debug("HTTP for category ID %s resulted in a miss, error %s.", category_id, type(e))
+            return None
 
     # --- OAuth stuff.
 

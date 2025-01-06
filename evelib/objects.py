@@ -21,7 +21,9 @@ __all__ = (
     "LocalizedStr",
     "EVEBlueprint",
     "EVEBlueprintActivity",
+    "EVECategory",
     "EVEConstellation",
+    "EVEGroup",
     "EVEMarketHistory",
     "EVEMarketOrder",
     "EVEMarketsRegionHistory",
@@ -38,6 +40,7 @@ __all__ = (
     "EVEPlanetaryColonyLayout",
     "EVERegion",
     "EVESolarSystem",
+    "EVEStatus",
     "EVEType",
 )
 
@@ -166,6 +169,78 @@ class EVEType(
         return ret
 
 
+class EVECategory(BaseEVEObject):
+    group_ids: tuple[int]
+    id: int
+    localized_name: LocalizedStr
+    name: str
+    published: bool
+
+    @classmethod
+    def from_esi_response(cls, response: ESIResponse, api: EVEAPI | None):
+        ret = cls._from_esi_response(response, api)
+
+        ret.group_ids = tuple(response.data["groups"])
+        ret.id = response.data["category_id"]
+        ret.localized_name = {response.content_language: response.data["name"]}
+        ret.name = response.data["name"]
+        ret.published = response.data["published"]
+
+        return ret
+
+    @classmethod
+    def from_sde_data(cls, data: dict, api: EVEAPI | None, *, category_id: int, group_ids: tuple[int]):
+        ret = cls._from_sde_data(data, api)
+
+        ret.group_ids = group_ids
+        ret.id = category_id
+        ret.localized_name = {enums.Language(raw_lang): name for raw_lang, name in data["name"].items()}
+        ret.name = ret.localized_name[enums.Language.en]
+        ret.published = data["published"]
+
+        return ret
+
+
+class EVEGroup(BaseEVEObject):
+    # SDE Only Stuff
+    # anchorable: bool
+    # anchored: bool
+    # fittable_non_singleton: bool
+    # icon_id: int
+    category_id: int
+    id: int
+    localized_name: LocalizedStr
+    name: str
+    published: bool
+    type_ids: tuple[int]
+
+    @classmethod
+    def from_esi_response(cls, response: ESIResponse, api: EVEAPI | None):
+        ret = cls._from_esi_response(response, api)
+
+        ret.category_id = response.data["category_id"]
+        ret.id = response.data["group_id"]
+        ret.localized_name = {response.content_language: response.data["name"]}
+        ret.name = response.data["name"]
+        ret.published = response.data["published"]
+        ret.type_ids = tuple(response.data["types"])
+
+        return ret
+
+    @classmethod
+    def from_sde_data(cls, data: dict, api: EVEAPI | None, *, group_id: int, type_ids: tuple[int]):
+        ret = cls._from_sde_data(data, api)
+
+        ret.category_id = data["categoryID"]
+        ret.id = group_id
+        ret.localized_name = {enums.Language(raw_lang): name for raw_lang, name in data["name"].items()}
+        ret.name = ret.localized_name[enums.Language.en]
+        ret.published = data["published"]
+        ret.type_ids = type_ids
+
+        return ret
+
+
 class EVEBlueprintActivity:
     materials: dict[int, int]
     """Materials required for the activity. {type_id: quantity}"""
@@ -213,6 +288,7 @@ class EVEBlueprint(BaseEVEObject):
     # """Material-reduction research."""
     # research_time: EVEBlueprintActivity  # TODO: Add this.
     # """Time-reduction research."""
+    reaction: EVEBlueprintActivity | None
     type_id: int
 
     # ESI does not currently host blueprint information it seems.
@@ -226,6 +302,11 @@ class EVEBlueprint(BaseEVEObject):
             ret.manufacturing = EVEBlueprintActivity.from_sde_data(data["activities"]["manufacturing"])
         else:
             ret.manufacturing = None
+
+        if reaction_data := data["activities"].get("reaction"):
+            ret.reaction = EVEBlueprintActivity.from_sde_data(reaction_data)
+        else:
+            ret.reaction = None
 
         ret.max_production_limit = data["maxProductionLimit"]
         ret.type_id = data["blueprintTypeID"]
@@ -971,5 +1052,28 @@ class EVEPlanet(BaseEVEObject):
         ret.position = tuple(data["position"])
         ret.system_id = system_id
         ret.type_id = data["typeID"]
+
+        return ret
+
+
+class EVEStatus(BaseEVEObject):
+    players: int
+    """Players currently online."""
+    server_version: str
+    """Current version of the EVE server."""
+    start_time: datetime
+    """Server start time."""
+    vip: bool | None
+    """If the server is in VIP mode. Set to `None` if the server doesn't report it."""
+
+    @classmethod
+    def from_esi_response(cls, response: ESIResponse, api: EVEAPI | None):
+        ret = cls._from_esi_response(response, api)
+
+        ret.players = response.data["players"]
+        ret.server_version = response.data["server_version"]
+        # Oh, so NOW they actually use a standard format.
+        ret.start_time = datetime.datetime.fromisoformat(response.data["start_time"])
+        ret.vip = response.data.get("vip", None)
 
         return ret
